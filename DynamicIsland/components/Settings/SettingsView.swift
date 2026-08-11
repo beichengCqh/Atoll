@@ -61,6 +61,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case clipboard
     case screenAssistant
     case colorPicker
+    case tools
     case downloads
     case shelf
     case shortcuts
@@ -77,7 +78,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .media, .liveActivities, .lockScreen, .devices:                 return .mediaAndDisplay
         case .hudAndOSD, .battery:                                           return .system
         case .timer, .calendar, .notes:                                      return .productivity
-        case .clipboard, .screenAssistant, .colorPicker, .shelf,
+        case .clipboard, .screenAssistant, .colorPicker, .tools, .shelf,
              .downloads, .shortcuts:                                         return .utilities
         case .stats, .terminal:                                              return .developer
         case .extensions:                                                    return .integrations
@@ -102,6 +103,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .clipboard: return String(localized: "Clipboard")
         case .screenAssistant: return String(localized: "Screen Assistant")
         case .colorPicker: return String(localized: "Color Picker")
+        case .tools: return String(localized: "Tools")
         case .downloads: return String(localized: "Downloads")
         case .shelf: return String(localized: "Shelf")
         case .shortcuts: return String(localized: "Shortcuts")
@@ -128,6 +130,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .clipboard: return "clipboard"
         case .screenAssistant: return "brain.head.profile"
         case .colorPicker: return "eyedropper"
+        case .tools: return "wrench.and.screwdriver"
         case .downloads: return "square.and.arrow.down"
         case .shelf: return "books.vertical"
         case .shortcuts: return "keyboard"
@@ -154,6 +157,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .clipboard: return .mint
         case .screenAssistant: return .pink
         case .colorPicker: return .accentColor
+        case .tools: return .indigo
         case .downloads: return .gray
         case .shelf: return .brown
         case .shortcuts: return .orange
@@ -501,6 +505,7 @@ struct SettingsView: View {
             .clipboard,
             .screenAssistant,
             .colorPicker,
+            .tools,
             .shelf,
             .downloads,
             .shortcuts,
@@ -917,6 +922,9 @@ struct SettingsView: View {
             SettingsSearchEntry(tab: .colorPicker, title: "History Size", keywords: ["color history"], highlightID: SettingsTab.colorPicker.highlightID(for: "History Size")),
             SettingsSearchEntry(tab: .colorPicker, title: "Show All Color Formats", keywords: ["hex", "hsl", "color formats"], highlightID: SettingsTab.colorPicker.highlightID(for: "Show All Color Formats")),
 
+            // Tools
+            SettingsSearchEntry(tab: .tools, title: "Enable Tool feature", keywords: ["tools", "base64", "timestamp", "converter"], highlightID: SettingsTab.tools.highlightID(for: "Enable Tool feature")),
+
             // Terminal
             SettingsSearchEntry(tab: .terminal, title: "Enable terminal", keywords: ["terminal", "guake", "shell"], highlightID: SettingsTab.terminal.highlightID(for: "Enable terminal")),
             SettingsSearchEntry(tab: .terminal, title: "Shell path", keywords: ["shell", "zsh", "bash", "terminal"], highlightID: SettingsTab.terminal.highlightID(for: "Shell path")),
@@ -1005,6 +1013,10 @@ struct SettingsView: View {
         case .colorPicker:
             SettingsForm(tab: .colorPicker) {
                 ColorPickerSettings()
+            }
+        case .tools:
+            SettingsForm(tab: .tools) {
+                ToolSettings()
             }
         case .downloads:
             SettingsForm(tab: .downloads) {
@@ -8350,6 +8362,30 @@ struct NotesSettingsView: View {
             }
         }
         .navigationTitle("Notes")
+    }
+}
+
+// MARK: - Tool Settings
+
+struct ToolSettings: View {
+    private func highlightID(_ title: String) -> String {
+        SettingsTab.tools.highlightID(for: title)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .enableToolFeature) {
+                    Text("Enable Tool feature")
+                }
+                .settingsHighlight(id: highlightID("Enable Tool feature"))
+            } header: {
+                Text("Tools")
+            } footer: {
+                Text("Show Base64 and timestamp converters in the notch.")
+            }
+        }
+        .navigationTitle("Tools")
     }
 }
 

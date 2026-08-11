@@ -92,6 +92,11 @@ func enabledStandardTabCount() -> Int {
         count += 1
     }
 
+    // Tool tab
+    if Defaults[.enableToolFeature] {
+        count += 1
+    }
+
     return count
 }
 

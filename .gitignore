@@ -141,6 +141,8 @@ PrivateWorks
 *.py
 !tests/test_privacy_configuration.py
 !tests/test_timer_lifecycle.py
+!tests/test_tool_converter.py
+!tests/test_tool_feature_configuration.py
 *.sh
 comparison_report.json
 *.txt

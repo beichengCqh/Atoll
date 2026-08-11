@@ -105,7 +105,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenSuppressedUntil: Date = .distantPast
     
-    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .extensionExperience]
+    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .tool, .extensionExperience]
     
     /// Direction of the most recent tab switch (true = forward/right, false = backward/left)
     @Published var tabSwitchForward: Bool = true
@@ -186,6 +186,13 @@ class DynamicIslandViewCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
+        Defaults.publisher(.enableToolFeature)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] change in
+                self?.handleToolFeatureToggle(change.newValue)
+            }
+            .store(in: &cancellables)
+
         Defaults.publisher(.enableMinimalisticUI)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] change in
@@ -236,6 +243,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
             Defaults.publisher(.enableClipboardManager).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.clipboardDisplayMode).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableTerminalFeature).map { _ in () }.eraseToAnyPublisher(),
+            Defaults.publisher(.enableToolFeature).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableMinimalisticUI).map { _ in () }.eraseToAnyPublisher()
         )
         .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
@@ -272,6 +280,13 @@ class DynamicIslandViewCoordinator: ObservableObject {
 
     private func handleTimerFeatureToggle(_ isEnabled: Bool) {
         guard !isEnabled, currentView == .timer else { return }
+        withAnimation(.smooth) {
+            currentView = .home
+        }
+    }
+
+    private func handleToolFeatureToggle(_ isEnabled: Bool) {
+        guard !isEnabled, currentView == .tool else { return }
         withAnimation(.smooth) {
             currentView = .home
         }

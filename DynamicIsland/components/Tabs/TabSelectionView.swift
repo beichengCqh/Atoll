@@ -52,6 +52,7 @@ struct TabSelectionView: View {
     @Default(.enableTimerFeature) var enableTimerFeature
     @Default(.enableStatsFeature) var enableStatsFeature
     @Default(.enableColorPickerFeature) var enableColorPickerFeature
+    @Default(.enableToolFeature) var enableToolFeature
     @Default(.timerDisplayMode) var timerDisplayMode
     @Default(.enableThirdPartyExtensions) private var enableThirdPartyExtensions
     @Default(.enableExtensionNotchExperiences) private var enableExtensionNotchExperiences
@@ -94,6 +95,9 @@ struct TabSelectionView: View {
         }
         if Defaults[.enableTerminalFeature] {
             tabsArray.append(TabModel(label: "Terminal", icon: "apple.terminal", view: .terminal))
+        }
+        if enableToolFeature {
+            tabsArray.append(TabModel(label: "Tool", icon: "wrench.and.screwdriver", view: .tool))
         }
         if extensionTabsEnabled {
             for payload in extensionTabPayloads {
