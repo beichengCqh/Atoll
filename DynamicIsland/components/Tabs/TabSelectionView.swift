@@ -53,6 +53,8 @@ struct TabSelectionView: View {
     @Default(.enableStatsFeature) var enableStatsFeature
     @Default(.enableColorPickerFeature) var enableColorPickerFeature
     @Default(.enableToolFeature) var enableToolFeature
+    // 少了这个 @Default，开关切换后 tab 栏不会重新求值，新 tab 要等下次别的变更才出现
+    @Default(.enableClaudeInbox) var enableClaudeInbox
     @Default(.timerDisplayMode) var timerDisplayMode
     @Default(.enableThirdPartyExtensions) private var enableThirdPartyExtensions
     @Default(.enableExtensionNotchExperiences) private var enableExtensionNotchExperiences
@@ -98,6 +100,9 @@ struct TabSelectionView: View {
         }
         if enableToolFeature {
             tabsArray.append(TabModel(label: "Tool", icon: "wrench.and.screwdriver", view: .tool))
+        }
+        if enableClaudeInbox {
+            tabsArray.append(TabModel(label: "Inbox", icon: "tray.full", view: .inbox))
         }
         if extensionTabsEnabled {
             for payload in extensionTabPayloads {

@@ -97,6 +97,11 @@ func enabledStandardTabCount() -> Int {
         count += 1
     }
 
+    // Inbox tab
+    if Defaults[.enableClaudeInbox] {
+        count += 1
+    }
+
     return count
 }
 

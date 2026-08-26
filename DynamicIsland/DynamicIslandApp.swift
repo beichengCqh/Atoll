@@ -278,6 +278,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // 同步把 inbox 的条目写完再退出。投递文件在摄取时就已删除，
+        // 这里不写盘的话，最后一批消息在磁盘上和内存里都不复存在。
+        ClaudeInboxManager.shared.stop()
+
         let userInfo: [String: Any] = [
             AtollDistributedNotifications.UserInfoKey.sourcePID: NSNumber(value: ProcessInfo.processInfo.processIdentifier)
         ]
@@ -687,6 +691,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup Privacy Indicator Manager (camera/mic; skipped under UI testing).
         if !AppRuntimeEnvironment.isUITesting {
             PrivacyIndicatorManager.shared.startMonitoring()
+        }
+
+        // Setup Claude Inbox：监听投递目录，并把 Atoll 没运行期间堆积的消息补读进来。
+        // UI 测试下跳过，避免测试机上真实的投递目录污染断言。
+        if Defaults[.enableClaudeInbox] && !AppRuntimeEnvironment.isUITesting {
+            ClaudeInboxManager.shared.start()
         }
         
         // Setup Real-time Audio Waveform capture if enabled

@@ -36,6 +36,11 @@ enum SneakContentType: Equatable {
     case privacy
     case lockScreen
     case capsLock
+    /// Claude inbox 收到 needs_input 消息时弹出的横幅。
+    /// 新增此 case 时必须同步改三处，否则功能静默失效且无任何编译提示：
+    /// 下方手写的 `==`、`toggleSneakPeek` 里的 `bypassedTypes`、
+    /// 以及 ContentView 中按 type 分派的两条排除长链。
+    case claudeInbox
     case extensionLiveActivity(bundleID: String, activityID: String)
 }
 
@@ -56,7 +61,8 @@ extension SneakContentType {
              (.bluetoothAudio, .bluetoothAudio),
              (.privacy, .privacy),
              (.lockScreen, .lockScreen),
-             (.capsLock, .capsLock):
+             (.capsLock, .capsLock),
+             (.claudeInbox, .claudeInbox):
             return true
         case let (.extensionLiveActivity(lb, la), .extensionLiveActivity(rb, ra)):
             return lb == rb && la == ra
@@ -105,7 +111,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenSuppressedUntil: Date = .distantPast
     
-    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .tool, .extensionExperience]
+    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .tool, .inbox, .extensionExperience]
     
     /// Direction of the most recent tab switch (true = forward/right, false = backward/left)
     @Published var tabSwitchForward: Bool = true
@@ -193,6 +199,13 @@ class DynamicIslandViewCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
+        Defaults.publisher(.enableClaudeInbox)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] change in
+                self?.handleInboxFeatureToggle(change.newValue)
+            }
+            .store(in: &cancellables)
+
         Defaults.publisher(.enableMinimalisticUI)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] change in
@@ -244,6 +257,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
             Defaults.publisher(.clipboardDisplayMode).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableTerminalFeature).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableToolFeature).map { _ in () }.eraseToAnyPublisher(),
+            Defaults.publisher(.enableClaudeInbox).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableMinimalisticUI).map { _ in () }.eraseToAnyPublisher()
         )
         .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
@@ -287,6 +301,14 @@ class DynamicIslandViewCoordinator: ObservableObject {
 
     private func handleToolFeatureToggle(_ isEnabled: Bool) {
         guard !isEnabled, currentView == .tool else { return }
+        withAnimation(.smooth) {
+            currentView = .home
+        }
+    }
+
+    /// 关闭 inbox 功能时，若当前正停在 inbox 页就退回首页，避免留在一个已经不存在的 tab 上。
+    private func handleInboxFeatureToggle(_ isEnabled: Bool) {
+        guard !isEnabled, currentView == .inbox else { return }
         withAnimation(.smooth) {
             currentView = .home
         }
@@ -358,13 +380,17 @@ class DynamicIslandViewCoordinator: ObservableObject {
             resolvedDuration = 10
         case .reminder:
             resolvedDuration = Defaults[.reminderSneakPeekDuration]
+        case .claudeInbox:
+            resolvedDuration = Defaults[.inboxSneakPeekDuration]
         case .extensionLiveActivity:
             resolvedDuration = duration
         default:
             resolvedDuration = duration
         }
         sneakPeekDuration = resolvedDuration
-        let bypassedTypes: [SneakContentType] = [.music, .timer, .reminder, .bluetoothAudio]
+        // 白名单之外的类型在用户关闭 HUD 替换时会被下方直接 return 掉。
+        // inbox 的横幅是它自己的功能开关控制的，与系统 HUD 替换无关，所以必须列入。
+        let bypassedTypes: [SneakContentType] = [.music, .timer, .reminder, .bluetoothAudio, .claudeInbox]
         
         // Check if it's an extension type
         let isExtensionType: Bool

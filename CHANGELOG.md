@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Inbox**: a general-purpose local message inbox. Any process can push a message to the notch by writing a JSON file into `~/Library/Application Support/Atoll/inbox/` — no port, no daemon, no authentication. Messages that arrive while Atoll is closed are picked up on next launch. Surfaces in three layers: a banner when something needs you, a live-activity count badge while the notch is closed, and a full list in a new Inbox tab. Ships with a Claude Code hook script that reports which sessions are running, finished, or waiting for you, and works the same from any terminal host.
+
 - Spotify "Like Song" media control: save or remove the current track from your Liked Songs directly from the notch, lock screen, and minimalist player, using the official Spotify Web API (OAuth 2.0 PKCE). Add the control to any media slot in settings. (#579)
 
 - Show the current Claude subscription plan (e.g. `Max 5x`) as a badge next to the Claude card title in the LLM Usage view (#684).

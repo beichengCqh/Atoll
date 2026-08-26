@@ -67,6 +67,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case shortcuts
     case notes
     case terminal
+    case inbox
     case about
 
     var id: String { rawValue }
@@ -81,7 +82,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .clipboard, .screenAssistant, .colorPicker, .tools, .shelf,
              .downloads, .shortcuts:                                         return .utilities
         case .stats, .terminal:                                              return .developer
-        case .extensions:                                                    return .integrations
+        case .extensions, .inbox:                                            return .integrations
         case .about:                                                         return .info
         }
     }
@@ -109,6 +110,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .shortcuts: return String(localized: "Shortcuts")
         case .notes: return String(localized: "Notes")
         case .terminal: return String(localized: "Terminal")
+        case .inbox: return String(localized: "Inbox")
         case .about: return String(localized: "About")
         }
     }
@@ -136,6 +138,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .shortcuts: return "keyboard"
         case .notes: return "note.text"
         case .terminal: return "apple.terminal"
+        case .inbox: return "tray.full"
         case .about: return "info.circle"
         }
     }
@@ -163,6 +166,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .shortcuts: return .orange
         case .notes: return Color(red: 0.979, green: 0.716, blue: 0.153, opacity: 1.000)
         case .terminal: return Color(red: 0.2, green: 0.8, blue: 0.4)
+        case .inbox: return .orange
         case .about: return .secondary
         }
     }
@@ -514,6 +518,7 @@ struct SettingsView: View {
             .terminal,
             // Integrations
             .extensions,
+            .inbox,
             // Info
             .about
         ]
@@ -937,6 +942,12 @@ struct SettingsView: View {
             SettingsSearchEntry(tab: .terminal, title: "Bold as bright", keywords: ["terminal", "bold", "bright", "colors"], highlightID: SettingsTab.terminal.highlightID(for: "Bold as bright")),
             SettingsSearchEntry(tab: .terminal, title: "Cursor style", keywords: ["terminal", "cursor", "block", "underline", "bar", "blink"], highlightID: SettingsTab.terminal.highlightID(for: "Cursor style")),
             SettingsSearchEntry(tab: .terminal, title: "Scrollback lines", keywords: ["terminal", "scrollback", "buffer", "history"], highlightID: SettingsTab.terminal.highlightID(for: "Scrollback lines")),
+            // Inbox。title 必须与 InboxSettings 里 settingsHighlight 的字符串逐字一致，
+            // 否则能搜到但点击跳转不高亮，且无任何编译或运行时报错。
+            SettingsSearchEntry(tab: .inbox, title: "Enable Inbox", keywords: ["inbox", "claude", "notification", "agent", "session"], highlightID: SettingsTab.inbox.highlightID(for: "Enable Inbox")),
+            SettingsSearchEntry(tab: .inbox, title: "Show count badge when closed", keywords: ["inbox", "badge", "live activity", "count"], highlightID: SettingsTab.inbox.highlightID(for: "Show count badge when closed")),
+            SettingsSearchEntry(tab: .inbox, title: "Banner duration", keywords: ["inbox", "banner", "sneak peek", "duration"], highlightID: SettingsTab.inbox.highlightID(for: "Banner duration")),
+            SettingsSearchEntry(tab: .inbox, title: "Send test delivery", keywords: ["inbox", "test", "diagnose", "self check"], highlightID: SettingsTab.inbox.highlightID(for: "Send test delivery")),
             SettingsSearchEntry(tab: .terminal, title: "Option as Meta", keywords: ["terminal", "option", "meta", "alt", "key"], highlightID: SettingsTab.terminal.highlightID(for: "Option as Meta")),
             SettingsSearchEntry(tab: .terminal, title: "Mouse reporting", keywords: ["terminal", "mouse", "reporting", "vim", "tmux"], highlightID: SettingsTab.terminal.highlightID(for: "Mouse reporting")),
         ]
@@ -1037,6 +1048,10 @@ struct SettingsView: View {
         case .terminal:
             SettingsForm(tab: .terminal) {
                 TerminalSettings()
+            }
+        case .inbox:
+            SettingsForm(tab: .inbox) {
+                InboxSettings()
             }
         case .about:
             if let controller = updaterController {
@@ -8387,6 +8402,142 @@ struct ToolSettings: View {
         }
         .navigationTitle("Tools")
     }
+}
+
+// MARK: - Inbox Settings
+
+/// Claude inbox 的设置页。
+///
+/// 「测试投递」按钮是这里最重要的控件：投递链路断掉时屏幕上的表现是空角标，
+/// 与「确实没有待办」完全一样。有一个能主动验证链路的按钮，
+/// 北城才能区分「没人找我」和「提醒根本没送到」。
+struct InboxSettings: View {
+    @ObservedObject private var manager = ClaudeInboxManager.shared
+    @Default(.enableClaudeInbox) private var enableClaudeInbox
+    @Default(.inboxMutedUntil) private var inboxMutedUntil
+    @Default(.inboxSneakPeekDuration) private var inboxSneakPeekDuration
+
+    /// 测试投递后给一句即时反馈，避免按了没反应像是坏了。
+    @State private var testFeedback: String?
+
+    private func highlightID(_ title: String) -> String {
+        SettingsTab.inbox.highlightID(for: title)
+    }
+
+    private var isMuted: Bool { inboxMutedUntil > Date() }
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .enableClaudeInbox) {
+                    Text("Enable Inbox")
+                }
+                .settingsHighlight(id: highlightID("Enable Inbox"))
+            } header: {
+                Text("Inbox")
+            } footer: {
+                Text("Any process can push a message to the notch by writing a JSON file into the delivery folder.")
+            }
+
+            if enableClaudeInbox {
+                Section {
+                    LabeledContent("Status") {
+                        Text(healthText).foregroundStyle(healthColor)
+                    }
+                    LabeledContent("Delivery folder") {
+                        // 路径要能被选中复制——配 hook 脚本时要照着填
+                        Text(InboxLocation.spool.path)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    HStack {
+                        Button("Send test delivery") {
+                            manager.sendTestDelivery()
+                            testFeedback = String(localized: "Test message delivered — it should appear in the Inbox tab.")
+                        }
+                        .settingsHighlight(id: highlightID("Send test delivery"))
+                        Button("Open in Finder") {
+                            InboxLocation.ensureSpoolExists()
+                            NSWorkspace.shared.open(InboxLocation.spool)
+                        }
+                    }
+                    if let testFeedback {
+                        Text(testFeedback).font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("An empty Inbox looks the same whether nothing needs you or the delivery chain is broken. Use the test delivery to tell them apart.")
+                }
+
+                Section {
+                    Defaults.Toggle(key: .enableInboxLiveActivity) {
+                        Text("Show count badge when closed")
+                    }
+                    .settingsHighlight(id: highlightID("Show count badge when closed"))
+
+                    Slider(value: $inboxSneakPeekDuration, in: 1...10, step: 0.5) {
+                        Text("Banner duration")
+                    } minimumValueLabel: {
+                        Text("1s")
+                    } maximumValueLabel: {
+                        Text("10s")
+                    }
+                    .settingsHighlight(id: highlightID("Banner duration"))
+                } header: {
+                    Text("Presentation")
+                }
+
+                Section {
+                    if isMuted {
+                        LabeledContent("Muted until") {
+                            Text(inboxMutedUntil, style: .time)
+                        }
+                        Button("Unmute now") { inboxMutedUntil = .distantPast }
+                    } else {
+                        HStack {
+                            Button("Mute 1 hour") { inboxMutedUntil = Date().addingTimeInterval(3600) }
+                            Button("Mute until tomorrow") { inboxMutedUntil = endOfToday }
+                        }
+                    }
+                } header: {
+                    Text("Mute")
+                } footer: {
+                    Text("Muting suppresses banners only. Messages keep arriving and the badge keeps counting, and nothing is replayed when muting ends.")
+                }
+            }
+        }
+        .navigationTitle("Inbox")
+    }
+
+    /// 今天结束的时刻。静音到明天用它，比固定加 N 小时更符合直觉。
+    private var endOfToday: Date {
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date().addingTimeInterval(86400)
+        return calendar.startOfDay(for: tomorrow)
+    }
+
+    /// 健康态显示上次收到投递的相对时间，异常态显示 manager 给的提示语，
+    /// 文案只在 `InboxSignalHealth` 里维护一份。
+    private var healthText: String {
+        let health = manager.signalHealth
+        if health == .healthy, let last = manager.lastSignalAt {
+            return Self.relativeFormatter.localizedString(for: last, relativeTo: Date())
+        }
+        return health.localizedHint
+    }
+
+    private var healthColor: Color {
+        manager.signalHealth.needsAttention ? .orange : .secondary
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
 }
 
 // MARK: - Terminal Settings

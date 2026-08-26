@@ -43,6 +43,7 @@ struct ContentView: View {
     @ObservedObject var musicManager = MusicManager.shared
     @ObservedObject var timerManager = TimerManager.shared
     @ObservedObject var reminderManager = ReminderLiveActivityManager.shared
+    @ObservedObject var inboxManager = ClaudeInboxManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var statsManager = StatsManager.shared
     @ObservedObject var recordingManager = ScreenRecordingManager.shared
@@ -63,6 +64,8 @@ struct ContentView: View {
     @Default(.showNetworkGraph) var showNetworkGraph
     @Default(.showDiskGraph) var showDiskGraph
     @Default(.enableReminderLiveActivity) var enableReminderLiveActivity
+    @Default(.enableClaudeInbox) var enableClaudeInbox
+    @Default(.enableInboxLiveActivity) var enableInboxLiveActivity
     @Default(.enableTimerFeature) var enableTimerFeature
     @Default(.timerDisplayMode) var timerDisplayMode
     @Default(.enableHorizontalMusicGestures) var enableHorizontalMusicGestures
@@ -184,6 +187,11 @@ struct ContentView: View {
 
         if coordinator.currentView == .tool {
             return CGSize(width: baseSize.width, height: 300)
+        }
+
+        // inbox 是可滚动列表，固定给足高度，否则超过两三条就挤在一起看不清
+        if coordinator.currentView == .inbox {
+            return CGSize(width: baseSize.width, height: 320)
         }
 
         if coordinator.currentView == .extensionExperience {
@@ -939,7 +947,7 @@ struct ContentView: View {
                             styleOverride: batteryModel.activeTemporaryHUDKind.map { resolvedBatteryNotificationStyle(for: $0) }
                         )
                         .id(batteryModel.activeTemporaryHUDToken)
-                      } else if isSneakPeekVisibleOnCurrentScreen && (Defaults[.inlineHUD] || isAirPodsListeningModeSneak) && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && (coordinator.sneakPeek.type != .timer) && (coordinator.sneakPeek.type != .reminder) && !coordinator.sneakPeek.type.isExtensionPayload && ((coordinator.sneakPeek.type != .volume && coordinator.sneakPeek.type != .brightness && coordinator.sneakPeek.type != .backlight) || vm.notchState == .closed) {
+                      } else if isSneakPeekVisibleOnCurrentScreen && (Defaults[.inlineHUD] || isAirPodsListeningModeSneak) && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && (coordinator.sneakPeek.type != .timer) && (coordinator.sneakPeek.type != .reminder) && (coordinator.sneakPeek.type != .claudeInbox) && !coordinator.sneakPeek.type.isExtensionPayload && ((coordinator.sneakPeek.type != .volume && coordinator.sneakPeek.type != .brightness && coordinator.sneakPeek.type != .backlight) || vm.notchState == .closed) {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(
                                   coordinator.sneakPeek.type == .capsLock
@@ -957,6 +965,8 @@ struct ContentView: View {
                           TimerLiveActivity()
                       } else if (!isCurrentScreenExpansionVisible || currentScreenExpansionType == .reminder) && vm.notchState == .closed && reminderManager.isActive && enableReminderLiveActivity && !vm.hideOnClosed {
                           ReminderLiveActivity()
+                      } else if (!isCurrentScreenExpansionVisible || currentScreenExpansionType == .claudeInbox) && vm.notchState == .closed && inboxManager.hasBadge && enableClaudeInbox && enableInboxLiveActivity && !vm.hideOnClosed {
+                          InboxLiveActivity()
                       } else if (!isCurrentScreenExpansionVisible || currentScreenExpansionType == .recording) && vm.notchState == .closed && (recordingManager.isRecording || !recordingManager.isRecorderIdle) && Defaults[.enableScreenRecordingDetection] && !vm.hideOnClosed && !musicPairingEligible {
                           RecordingLiveActivity()
                       } else if (!isCurrentScreenExpansionVisible || currentScreenExpansionType == .download) && vm.notchState == .closed && downloadManager.isDownloading && Defaults[.enableDownloadListener] && !vm.hideOnClosed {
@@ -998,7 +1008,7 @@ struct ContentView: View {
                        }
                       
                       if isSneakPeekVisibleOnCurrentScreen {
-                          if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && (coordinator.sneakPeek.type != .timer) && (coordinator.sneakPeek.type != .reminder) && (coordinator.sneakPeek.type != .capsLock) && !coordinator.sneakPeek.type.isExtensionPayload && !Defaults[.inlineHUD] && !isAirPodsListeningModeSneak && ((coordinator.sneakPeek.type != .volume && coordinator.sneakPeek.type != .brightness && coordinator.sneakPeek.type != .backlight) || vm.notchState == .closed) {
+                          if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && (coordinator.sneakPeek.type != .timer) && (coordinator.sneakPeek.type != .reminder) && (coordinator.sneakPeek.type != .capsLock) && (coordinator.sneakPeek.type != .claudeInbox) && !coordinator.sneakPeek.type.isExtensionPayload && !Defaults[.inlineHUD] && !isAirPodsListeningModeSneak && ((coordinator.sneakPeek.type != .volume && coordinator.sneakPeek.type != .brightness && coordinator.sneakPeek.type != .backlight) || vm.notchState == .closed) {
                               SystemEventIndicatorModifier(eventType: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, sendEventBack: { _ in
                                   //
                               })
@@ -1045,6 +1055,33 @@ struct ContentView: View {
                                               textColor: reminderColor(for: reminder, now: reminderManager.currentDate),
                                               minDuration: 1,
                                               frameWidth: max(0, geo.size.width - 14)
+                                          )
+                                      }
+                                  }
+                                  .padding(.bottom, 10)
+                              }
+                          }
+                          // Claude inbox：内容全部由 ClaudeInboxManager 写进 sneakPeek，
+                          // 这里不读 manager，避免横幅渲染反过来依赖摄取链路的状态。
+                          else if coordinator.sneakPeek.type == .claudeInbox {
+                              if !vm.hideOnClosed && activeSneakPeekStyle == .standard {
+                                  GeometryReader { geo in
+                                      let chipColor = (coordinator.sneakPeek.accentColor ?? .orange)
+                                          .ensureMinimumBrightness(factor: 0.7)
+                                      HStack(spacing: 6) {
+                                          RoundedRectangle(cornerRadius: 2)
+                                              .fill(chipColor)
+                                              .frame(width: 8, height: 12)
+                                          if !coordinator.sneakPeek.icon.isEmpty {
+                                              Image(systemName: coordinator.sneakPeek.icon)
+                                                  .font(.system(size: 11, weight: .semibold))
+                                                  .foregroundStyle(chipColor)
+                                          }
+                                          MarqueeText(
+                                              .constant(inboxSneakPeekText),
+                                              textColor: .white,
+                                              minDuration: 1,
+                                              frameWidth: max(0, geo.size.width - 32)
                                           )
                                       }
                                   }
@@ -1113,6 +1150,8 @@ struct ContentView: View {
                                 NotchTerminalView()
                             case .tool:
                                 NotchToolView()
+                            case .inbox:
+                                NotchInboxView()
                             case .extensionExperience:
                                 if let payload = currentExtensionTabPayload() {
                                     ExtensionNotchExperienceTabView(payload: payload)
@@ -1138,6 +1177,19 @@ struct ContentView: View {
             return .red
         }
         return Color(nsColor: reminder.event.calendar.color).ensureMinimumBrightness(factor: 0.7)
+    }
+
+    /// inbox 横幅的一行文案。标题与副标题由 ClaudeInboxManager 在触发时写进 sneakPeek，
+    /// 两者都为空时退回一句通用提示，保证横幅永远不会显示成空白条。
+    private var inboxSneakPeekText: String {
+        let title = coordinator.sneakPeek.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subtitle = coordinator.sneakPeek.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (title.isEmpty, subtitle.isEmpty) {
+        case (false, false): return "\(title) • \(subtitle)"
+        case (false, true): return title
+        case (true, false): return subtitle
+        case (true, true): return String(localized: "A session needs you")
+        }
     }
 
     private func reminderSneakPeekText(for entry: ReminderLiveActivityManager.ReminderEntry, now: Date) -> String {
@@ -2723,9 +2775,11 @@ struct ContentView: View {
         let isMusicSneak = coordinator.sneakPeek.type == .music && vm.notchState == .closed && !vm.hideOnClosed && style == .standard
         let isTimerSneak = coordinator.sneakPeek.type == .timer && !vm.hideOnClosed && style == .standard
         let isReminderSneak = coordinator.sneakPeek.type == .reminder && !vm.hideOnClosed && style == .standard
-        let isOtherSneak = coordinator.sneakPeek.type != .music && coordinator.sneakPeek.type != .timer && coordinator.sneakPeek.type != .reminder && vm.notchState == .closed
-        
-        return isMusicSneak || isTimerSneak || isReminderSneak || isOtherSneak
+        // inbox 横幅在展开态也要显示，所以跟 timer / reminder 一样不要求 notchState == .closed
+        let isInboxSneak = coordinator.sneakPeek.type == .claudeInbox && !vm.hideOnClosed && style == .standard
+        let isOtherSneak = coordinator.sneakPeek.type != .music && coordinator.sneakPeek.type != .timer && coordinator.sneakPeek.type != .reminder && coordinator.sneakPeek.type != .claudeInbox && vm.notchState == .closed
+
+        return isMusicSneak || isTimerSneak || isReminderSneak || isInboxSneak || isOtherSneak
     }
 
     private func resolvedSneakPeekStyle() -> SneakPeekStyle {

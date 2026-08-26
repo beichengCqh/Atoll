@@ -1143,6 +1143,16 @@ extension Defaults.Keys {
     static let showDiskGraph = Key<Bool>("showDiskGraph", default: false)
     static let cpuTemperatureUnit = Key<LockScreenWeatherTemperatureUnit>("cpuTemperatureUnit", default: .celsius)
     
+    // MARK: Claude Inbox Feature
+    static let enableClaudeInbox = Key<Bool>("enableClaudeInbox", default: false)
+    /// 静音截止时刻。静音期内仍然照常摄取消息并更新角标，只抑制瞬时横幅与提示音，
+    /// 解除时不会把静音期间攒下的横幅补喷出来。
+    static let inboxMutedUntil = Key<Date>("inboxMutedUntil", default: .distantPast)
+    /// 收起态是否常驻显示待确认/运行中的计数角标。
+    static let enableInboxLiveActivity = Key<Bool>("enableInboxLiveActivity", default: true)
+    /// needs_input 消息弹出的瞬时横幅停留秒数。
+    static let inboxSneakPeekDuration = Key<Double>("inboxSneakPeekDuration", default: 4.0)
+
     // MARK: Terminal Feature
     static let enableTerminalFeature = Key<Bool>("enableTerminalFeature", default: false)
     static let terminalShellPath = Key<String>("terminalShellPath", default: "/bin/zsh")

@@ -143,6 +143,8 @@ PrivateWorks
 !tests/test_timer_lifecycle.py
 !tests/test_tool_converter.py
 !tests/test_tool_feature_configuration.py
+!tests/test_claude_inbox_configuration.py
+__pycache__/
 *.sh
 comparison_report.json
 *.txt
