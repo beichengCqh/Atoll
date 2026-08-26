@@ -8,6 +8,10 @@ on:
       - nightly
       - alpha
       - beta
+      # Feature branches build on push so a fork can verify a change compiles
+      # without opening a pull request first.
+      - 'feat-**'
+      - 'fix-**'
   pull_request:
     branches:
       - dev
@@ -44,6 +48,20 @@ jobs:
 
       - name: Validate timer lifecycle cleanup
         run: python3 -m unittest tests.test_timer_lifecycle
+
+      - name: Validate inbox configuration
+        run: python3 -m unittest tests.test_claude_inbox_configuration
+
+      # Behaviour test for the inbox contract layer. Compiles standalone with the
+      # command line tools, so it also gives a fast failure before the full build.
+      - name: Run inbox contract probe
+        run: |
+          swiftc -o "$RUNNER_TEMP/inbox_probe" \
+            DynamicIsland/managers/ClaudeInbox/InboxMessage.swift \
+            DynamicIsland/managers/ClaudeInbox/InboxLocation.swift \
+            DynamicIsland/managers/ClaudeInbox/InboxStore.swift \
+            tests/inbox_probe.swift
+          "$RUNNER_TEMP/inbox_probe"
 
       - name: Download Metal Toolchain
         # The downloadable Metal Toolchain is an Xcode 26+ (macOS 26) component; older Xcode ships metal.
