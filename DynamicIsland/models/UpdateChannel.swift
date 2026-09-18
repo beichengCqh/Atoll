@@ -49,15 +49,11 @@ enum UpdateChannel: String, CaseIterable, Identifiable, Codable, Defaults.Serial
         }
     }
 
+    /// fork 只发布一条更新线：CI 把上游 dev 与 fork 改动合并后签名发布到 fork 的 GitHub Release，
+    /// 所有通道共用同一个 appcast。合并上游时这里必须保留 fork 地址——上游 appcast 用上游私钥签名，
+    /// 与本构建 Info.plist 里的 fork 公钥（SUPublicEDKey）不成对。
     var feedURL: URL {
-        let base = "https://raw.githubusercontent.com/Ebullioscopic/Atoll/main/Updates"
-        switch self {
-        case .stable:  return URL(string: "\(base)/appcast.xml")!
-        case .beta:    return URL(string: "\(base)/appcast-beta.xml")!
-        case .alpha:   return URL(string: "\(base)/appcast-alpha.xml")!
-        case .nightly: return URL(string: "\(base)/appcast-nightly.xml")!
-        case .dev:     return URL(string: "\(base)/appcast-nightly.xml")!
-        }
+        URL(string: "https://github.com/beichengCqh/Atoll/releases/latest/download/appcast.xml")!
     }
 
     /// A color used for the channel badge in the UI.

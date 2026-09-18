@@ -144,6 +144,8 @@ PrivateWorks
 !tests/test_tool_converter.py
 !tests/test_tool_feature_configuration.py
 !tests/test_claude_inbox_configuration.py
+!tests/test_fork_release.py
+!scripts/fork_release.py
 __pycache__/
 *.sh
 comparison_report.json

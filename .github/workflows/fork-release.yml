@@ -1,0 +1,399 @@
+name: Fork Release
+
+# fork 自有的发布线：fork dev 合并上游 dev → 构建 → 自签证书代码签名 → Sparkle EdDSA 签名
+# → 发布到本仓 GitHub Release。已安装的 fork 版从 releases/latest/download/appcast.xml 拉取更新。
+#
+# 需要的 secrets：
+#   SPARKLE_ED_PRIVATE_KEY  Sparkle 私钥（Base64 的 32 字节 Ed25519 种子），与 Info.plist 的 SUPublicEDKey 成对
+#   CODESIGN_PRIVATE_KEY    代码签名私钥（PEM），与 scripts/fork_signing/codesign_certificate.pem 成对
+# 两把钥匙固定不变：换掉 Sparkle 钥匙会让已安装版本拒收更新，换掉签名证书会让系统权限在更新后失效。
+
+on:
+  push:
+    branches:
+      - dev
+  schedule:
+    # 每天 UTC 19:00（北京时间 03:00）检查上游是否有新提交
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Publish even if neither fork nor upstream changed
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/Ebullioscopic/Atoll.git
+  UPSTREAM_BRANCH: dev
+  FORK_BRANCH: dev
+  PROJECT: DynamicIsland.xcodeproj
+  SCHEME: DynamicIsland
+  APP_NAME: Atoll
+  DERIVED_DATA: build/DerivedData
+  CODESIGN_CERTIFICATE: scripts/fork_signing/codesign_certificate.pem
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    name: Merge upstream, build and publish
+    if: github.repository == 'beichengCqh/Atoll'
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout fork branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Keep fork automation healthy
+        # 上游的发布、镜像、nightly 等工作流依赖上游 secrets 与分支，在 fork 上只会失败并发通知，统一停用。
+        # 同时重新启用本工作流：fork 默认停用定时任务，公开仓 60 天无活动也会自动停用。
+        continue-on-error: true
+        run: |
+          for workflow in release.yml mirror-release.yml nightly-merge.yml update-pricing.yml triage-slash-commands.yml; do
+            if gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/disable" >/dev/null 2>&1; then
+              echo "disabled $workflow"
+            else
+              echo "left $workflow as is"
+            fi
+          done
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/fork-release.yml/enable" && echo "fork-release.yml enabled"
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name "Atoll Fork Release"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          FORK_SHA=$(git rev-parse HEAD)
+          git fetch --no-tags "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
+          UPSTREAM_SHA=$(git rev-parse FETCH_HEAD)
+          # 合并结果只用于本次构建，不推回仓库；冲突时整个发布失败，GitHub 会邮件通知仓库所有者
+          if ! git merge --no-edit FETCH_HEAD -m "Merge upstream ${UPSTREAM_BRANCH} ${UPSTREAM_SHA::7}"; then
+            CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+            echo "::error title=Upstream merge conflict::upstream ${UPSTREAM_BRANCH}@${UPSTREAM_SHA::7} conflicts with fork ${FORK_BRANCH}@${FORK_SHA::7} in: ${CONFLICTS}. Merge upstream into fork dev locally and push; releases resume automatically."
+            exit 1
+          fi
+          echo "fork_sha=$FORK_SHA" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          PREVIOUS_DIR="$RUNNER_TEMP/previous-release"
+          mkdir -p "$PREVIOUS_DIR"
+          if ! gh release download --repo "$GITHUB_REPOSITORY" --pattern build-info.json --dir "$PREVIOUS_DIR" 2>/dev/null; then
+            echo "No previous fork release found."
+          fi
+          python3 scripts/fork_release.py decide \
+            --previous "$PREVIOUS_DIR/build-info.json" \
+            --fork-sha "${{ steps.merge.outputs.fork_sha }}" \
+            --upstream-sha "${{ steps.merge.outputs.upstream_sha }}" \
+            --force "${FORCE:-false}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Select Xcode
+        if: steps.decide.outputs.release == 'true'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Load signing secrets
+        if: steps.decide.outputs.release == 'true'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          CODESIGN_PRIVATE_KEY: ${{ secrets.CODESIGN_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ] || [ -z "$CODESIGN_PRIVATE_KEY" ]; then
+            echo "::error::Secrets SPARKLE_ED_PRIVATE_KEY and CODESIGN_PRIVATE_KEY must both be configured."
+            exit 1
+          fi
+          SPARKLE_KEY_FILE="$RUNNER_TEMP/sparkle_private_key"
+          CODESIGN_KEY_FILE="$RUNNER_TEMP/codesign_private_key.pem"
+          # 私钥只在一次性 runner 的临时目录落盘，最后一步统一删除
+          ( umask 077
+            printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$SPARKLE_KEY_FILE"
+            printf '%s\n' "$CODESIGN_PRIVATE_KEY" > "$CODESIGN_KEY_FILE" )
+
+          swiftc -O -o "$RUNNER_TEMP/sparkle_key_tool" scripts/sparkle_key_tool.swift
+          DERIVED_PUBLIC_KEY=$("$RUNNER_TEMP/sparkle_key_tool" public "$SPARKLE_KEY_FILE")
+          PLIST_PUBLIC_KEY=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" DynamicIsland/Info.plist)
+          if [ "$DERIVED_PUBLIC_KEY" != "$PLIST_PUBLIC_KEY" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY does not match SUPublicEDKey in DynamicIsland/Info.plist."
+            exit 1
+          fi
+
+          CERT_MODULUS=$(/usr/bin/openssl x509 -noout -modulus -in "$CODESIGN_CERTIFICATE" | shasum -a 256)
+          KEY_MODULUS=$(/usr/bin/openssl rsa -noout -modulus -in "$CODESIGN_KEY_FILE" | shasum -a 256)
+          if [ "$CERT_MODULUS" != "$KEY_MODULUS" ]; then
+            echo "::error::CODESIGN_PRIVATE_KEY does not match $CODESIGN_CERTIFICATE."
+            exit 1
+          fi
+
+          echo "SPARKLE_KEY_FILE=$SPARKLE_KEY_FILE" >> "$GITHUB_ENV"
+          echo "CODESIGN_KEY_FILE=$CODESIGN_KEY_FILE" >> "$GITHUB_ENV"
+          echo "KEY_TOOL=$RUNNER_TEMP/sparkle_key_tool" >> "$GITHUB_ENV"
+
+      - name: Run regression tests
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          python3 -m unittest $(ls tests/test_*.py | sed -e 's#/#.#' -e 's#\.py$##')
+
+      - name: Prepare Xcode components
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          sudo xcodebuild -runFirstLaunch || true
+          MACOS_MAJOR=$(sw_vers -productVersion | cut -d. -f1)
+          if [ "$MACOS_MAJOR" -ge 26 ]; then
+            downloaded=false
+            for attempt in 1 2 3 4 5; do
+              if sudo xcodebuild -downloadComponent MetalToolchain; then
+                downloaded=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$downloaded" = false ] && ! xcrun -f metal >/dev/null 2>&1; then
+              echo "::error::Metal Toolchain is unavailable."
+              exit 1
+            fi
+          fi
+
+      - name: Resolve Swift packages
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -derivedDataPath "$DERIVED_DATA"
+
+      - name: Prepare entitlements
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          ENTITLEMENTS="$RUNNER_TEMP/Atoll.entitlements"
+          cp DynamicIsland/DynamicIsland.entitlements "$ENTITLEMENTS"
+          # 非沙盒的自签构建走 Sparkle 进程内安装路径，不注册这个 mach service
+          if ! plutil_output=$(plutil -remove com.apple.security.mach-services "$ENTITLEMENTS" 2>&1); then
+            if printf '%s' "$plutil_output" | grep -q "No value to remove"; then
+              echo "mach-services entitlement is already absent."
+            else
+              echo "::error::Failed to prepare entitlements: $plutil_output"
+              exit 1
+            fi
+          fi
+          echo "ENTITLEMENTS=$ENTITLEMENTS" >> "$GITHUB_ENV"
+
+      - name: Compute version
+        id: version
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          BASE_VERSION=$(tr -d '[:space:]' < VERSION)
+          # 12 位 UTC 时间戳作构建号：随时间单调递增，Sparkle 以它判断新旧
+          BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
+          VERSION="${BASE_VERSION}-bc.${BUILD_NUMBER}"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=bc-${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${APP_NAME}-${VERSION}.zip" >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION (build $BUILD_NUMBER)"
+
+      - name: Build Release app
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "platform=macOS" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath build/BuildResults.xcresult \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
+            CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS" \
+            | tee build/xcodebuild.log
+          echo "APP_PATH=$DERIVED_DATA/Build/Products/Release/$APP_NAME.app" >> "$GITHUB_ENV"
+
+      - name: Sign app with fork certificate
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/fork-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          P12_FILE="$RUNNER_TEMP/codesign.p12"
+          # 系统自带的 LibreSSL 生成的 p12 能被 security import 直接接受
+          /usr/bin/openssl pkcs12 -export \
+            -inkey "$CODESIGN_KEY_FILE" -in "$CODESIGN_CERTIFICATE" \
+            -name "Atoll Fork Code Signing" -out "$P12_FILE" -passout "pass:$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12_FILE" -k "$KEYCHAIN" -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
+          rm -f "$P12_FILE"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          # codesign 只接受受信任的签名证书。信任只加在这台一次性 runner 上，
+          # 用户机器校验签名时按证书哈希匹配，不需要信任这张证书。
+          sudo security authorizationdb write com.apple.trust-settings.admin allow
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$CODESIGN_CERTIFICATE"
+
+          IDENTITY=$(/usr/bin/openssl x509 -in "$CODESIGN_CERTIFICATE" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          # 在 ad-hoc 构建产物上整体重签：保留每个嵌套组件各自的 entitlements，
+          # 指定要求由 codesign 按证书重新生成（锚定证书哈希），不沿用 ad-hoc 的 cdhash 要求
+          codesign --force --deep \
+            --options runtime \
+            --timestamp=none \
+            --preserve-metadata=entitlements \
+            --keychain "$KEYCHAIN" \
+            --sign "$IDENTITY" \
+            "$APP_PATH"
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Verify app
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          INFO="$APP_PATH/Contents/Info.plist"
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$INFO"; }
+
+          test "$(plist CFBundleVersion)" = "${{ steps.version.outputs.build_number }}"
+          test "$(plist CFBundleShortVersionString)" = "${{ steps.version.outputs.version }}"
+          test "$(plist SUFeedURL)" = "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml"
+          test "$(plist SUPublicEDKey)" = "$("$KEY_TOOL" public "$SPARKLE_KEY_FILE")"
+
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -d -r- "$APP_PATH" 2>&1 | tee build/designated-requirement.txt
+          # 指定要求必须锚定在 fork 证书上，系统权限（辅助功能、屏幕录制等）才能跨版本保留
+          grep -qi "$SIGNING_IDENTITY" build/designated-requirement.txt
+          lipo -info "$APP_PATH/Contents/MacOS/$APP_NAME"
+
+      - name: Package and sign update
+        id: package
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          ZIP_PATH="build/${{ steps.version.outputs.zip_name }}"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+
+          SIGN_UPDATE=$(find "$DERIVED_DATA/SourcePackages" -name sign_update -type f 2>/dev/null | head -1)
+          if [ -z "$SIGN_UPDATE" ]; then
+            echo "::error::Sparkle sign_update tool was not found."
+            exit 1
+          fi
+          SIGN_OUTPUT=$("$SIGN_UPDATE" --ed-key-file "$SPARKLE_KEY_FILE" "$ZIP_PATH")
+          SIGNATURE=$(printf '%s' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+          if [ -z "$SIGNATURE" ]; then
+            echo "::error::Could not parse sign_update output."
+            exit 1
+          fi
+          # 用 App 内置公钥独立复核一次，等价于客户端 Sparkle 收到更新时的校验
+          "$KEY_TOOL" verify "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist")" "$ZIP_PATH" "$SIGNATURE"
+
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "signature=$SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "length=$(stat -f%z "$ZIP_PATH")" >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes, appcast and build info
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          FORK_SHA="${{ steps.merge.outputs.fork_sha }}"
+          UPSTREAM_SHA="${{ steps.merge.outputs.upstream_sha }}"
+          PREVIOUS_UPSTREAM="${{ steps.decide.outputs.previous_upstream_sha }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD_NUMBER="${{ steps.version.outputs.build_number }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          {
+            echo "Atoll ${VERSION} (build ${BUILD_NUMBER})"
+            echo
+            echo "- fork ${FORK_BRANCH}: ${FORK_SHA}"
+            echo "- upstream ${UPSTREAM_BRANCH}: ${UPSTREAM_SHA}"
+            echo "- reason: ${{ steps.decide.outputs.reason }}"
+            echo
+            echo "Fork changes:"
+            git log --no-merges --format='- %s' "${UPSTREAM_SHA}..${FORK_SHA}" | head -40
+            if [ -n "$PREVIOUS_UPSTREAM" ] && git cat-file -e "${PREVIOUS_UPSTREAM}^{commit}" 2>/dev/null; then
+              echo
+              echo "Upstream changes since the previous fork release:"
+              git log --no-merges --format='- %s' "${PREVIOUS_UPSTREAM}..${UPSTREAM_SHA}" | head -60
+            fi
+          } > build/release-notes.md
+
+          MINIMUM_SYSTEM=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist")
+          python3 scripts/fork_release.py appcast \
+            --version "$VERSION" \
+            --build "$BUILD_NUMBER" \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/${TAG}/${{ steps.version.outputs.zip_name }}" \
+            --length "${{ steps.package.outputs.length }}" \
+            --signature "${{ steps.package.outputs.signature }}" \
+            --minimum-system "$MINIMUM_SYSTEM" \
+            --notes-file build/release-notes.md \
+            --output build/appcast.xml
+          python3 scripts/fork_release.py build-info \
+            --fork-sha "$FORK_SHA" \
+            --upstream-sha "$UPSTREAM_SHA" \
+            --build "$BUILD_NUMBER" \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --output build/build-info.json
+          xmllint --noout build/appcast.xml
+
+      - name: Publish release
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # 先建草稿、传齐附件再转正式：latest 指针只在 appcast 与安装包都就位后才切到新版本
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "${{ steps.merge.outputs.fork_sha }}" \
+            --title "Atoll ${{ steps.version.outputs.version }}" \
+            --notes-file build/release-notes.md \
+            "${{ steps.package.outputs.zip_path }}" \
+            build/appcast.xml \
+            build/build-info.json
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-release-diagnostics-${{ github.run_number }}
+          path: |
+            build/xcodebuild.log
+            build/BuildResults.xcresult
+            build/designated-requirement.txt
+            build/release-notes.md
+            build/appcast.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/sparkle_private_key" "$RUNNER_TEMP/codesign_private_key.pem" "$RUNNER_TEMP/codesign.p12"
+          if [ -n "${KEYCHAIN:-}" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
