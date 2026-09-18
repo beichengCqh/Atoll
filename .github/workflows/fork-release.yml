@@ -252,17 +252,13 @@ jobs:
           security import "$P12_FILE" -k "$KEYCHAIN" -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
           rm -f "$P12_FILE"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # codesign 只在搜索列表里的钥匙串中查找签名身份，--keychain 参数本身不够。
+          # 自签证书无需加入系统信任：codesign 可以直接用它签名，校验时按证书哈希匹配指定要求。
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
           echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
-          # codesign 只接受受信任的签名证书。信任只加在这台一次性 runner 上，
-          # 用户机器校验签名时按证书哈希匹配，不需要信任这张证书。
-          sudo security authorizationdb write com.apple.trust-settings.admin allow
-          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-            -k /Library/Keychains/System.keychain "$CODESIGN_CERTIFICATE"
-
           IDENTITY=$(/usr/bin/openssl x509 -in "$CODESIGN_CERTIFICATE" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')
-          security find-identity -v -p codesigning "$KEYCHAIN"
+          security find-identity -p codesigning "$KEYCHAIN"
           # 在 ad-hoc 构建产物上整体重签：保留每个嵌套组件各自的 entitlements，
           # 指定要求由 codesign 按证书重新生成（锚定证书哈希），不沿用 ad-hoc 的 cdhash 要求
           codesign --force --deep \

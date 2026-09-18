@@ -225,7 +225,7 @@ class WorkflowTests(unittest.TestCase):
             "secrets.SPARKLE_ED_PRIVATE_KEY",
             "secrets.CODESIGN_PRIVATE_KEY",
             "--preserve-metadata=entitlements",
-            "add-trusted-cert",
+            'security list-keychains -d user -s "$KEYCHAIN"',
             "sign_update",
             'verify "$(/usr/libexec/PlistBuddy',
             "scripts/fork_release.py decide",
@@ -234,6 +234,10 @@ class WorkflowTests(unittest.TestCase):
             "tests/test_*.py",
         ):
             self.assertIn(fragment, workflow)
+
+        # macOS 26 runner 上改系统信任会被拒（-60005）或卡在等待图形授权；自签证书签名本就不需要信任
+        self.assertNotIn("add-trusted-cert", workflow)
+        self.assertNotIn("authorizationdb", workflow)
 
         # 沿用 ad-hoc 的 requirements 会把指定要求钉死在 cdhash 上，每次更新后系统权限都会失效
         for preserved in re.findall(r"--preserve-metadata=([\w,-]+)", workflow):
