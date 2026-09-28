@@ -16,8 +16,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "DynamicIsland"
-TODO_ITEM = SOURCE_ROOT / "managers/Todo/TodoItem.swift"
-PROBE = ROOT / "tests/todo_probe.swift"
+PROBE_SOURCES = [
+    SOURCE_ROOT / "managers/Todo/TodoItem.swift",
+    SOURCE_ROOT / "managers/Todo/TodoFocusPolicy.swift",
+    ROOT / "tests/todo_probe.swift",
+]
 
 
 def slice_between(source, start_marker, end_marker):
@@ -120,11 +123,13 @@ class TodoConfigurationTests(unittest.TestCase):
         self.assertIn(".onExitCommand", todo_view, "待办页输入框缺 Esc 收起")
 
     def test_settings_does_not_prompt_when_disabled(self):
-        self.assertIn(
-            ".task(id: enableTodoFeature)",
-            self.todo_settings_source,
-            "设置页不论功能是否开启都会读取提醒事项，关闭功能时打开设置页也会弹权限框",
-        )
+        # 断言任务体里先判断开关再读取：只留 .task(id:) 而丢了 guard 时同样会弹权限框
+        body = slice_between(self.todo_settings_source, ".task(id: enableTodoFeature) {", "\n        }\n")
+        guard_at = body.find("guard enableTodoFeature else { return }")
+        activate_at = body.find("manager.activate(")
+        self.assertNotEqual(-1, guard_at, "设置页读取提醒事项前没有判断功能开关，关闭功能时打开设置页也会弹权限框")
+        self.assertNotEqual(-1, activate_at, "设置页没有在功能开启时读取提醒事项")
+        self.assertLess(guard_at, activate_at, "功能开关判断必须在读取提醒事项之前")
 
     def test_settings_tab_and_search_entries(self):
         self.assertIn("case todo", self.settings_source, "SettingsTab 缺 case todo")
@@ -149,7 +154,7 @@ class TodoProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / "todo_probe"
             compiled = subprocess.run(
-                ["swiftc", "-o", str(executable), str(TODO_ITEM), str(PROBE)],
+                ["swiftc", "-o", str(executable), *map(str, PROBE_SOURCES)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

@@ -28,8 +28,6 @@ struct NotchTodoView: View {
     @EnvironmentObject private var vm: DynamicIslandViewModel
     @Default(.todoReminderListID) private var listID
 
-    @State private var draft = ""
-    @State private var due: TodoDueOption = .none
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -79,7 +77,7 @@ struct NotchTodoView: View {
 
     private var inputRow: some View {
         HStack(spacing: 6) {
-            TextField("Add a todo…", text: $draft)
+            TextField("Add a todo…", text: $manager.draftTitle)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($isInputFocused)
@@ -106,14 +104,14 @@ struct NotchTodoView: View {
     private var dueChip: some View {
         Button {
             let options = TodoDueOption.allCases
-            let next = (options.firstIndex(of: due) ?? 0) + 1
-            due = options[next % options.count]
+            let next = (options.firstIndex(of: manager.draftDue) ?? 0) + 1
+            manager.draftDue = options[next % options.count]
         } label: {
-            Label(due.label, systemImage: "calendar")
+            Label(manager.draftDue.label, systemImage: "calendar")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(due == .none ? Color.secondary : Color.accentColor)
+                .foregroundStyle(manager.draftDue == .none ? Color.secondary : Color.accentColor)
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(.white.opacity(due == .none ? 0.05 : 0.12), in: Capsule())
+                .background(.white.opacity(manager.draftDue == .none ? 0.05 : 0.12), in: Capsule())
                 .fixedSize()
         }
         .buttonStyle(.plain)
@@ -199,18 +197,21 @@ struct NotchTodoView: View {
     }
 
     private var canAdd: Bool {
-        manager.accessState == .granted && TodoLogic.normalizedTitle(draft) != nil
+        manager.accessState == .granted && TodoLogic.normalizedTitle(manager.draftTitle) != nil
     }
 
     /// 添加成功才清空输入并把截止重置为无；失败保留原文，错误提示由 manager 给出。
+    /// 保存期间用户若又改了输入框，保留新输入，只在内容仍是刚提交的那句时才清空。
     private func addDraft() {
         guard canAdd else { return }
-        let title = draft
-        let chosenDue = due
+        let title = manager.draftTitle
+        let chosenDue = manager.draftDue
         Task {
             if await manager.add(title: title, due: chosenDue) {
-                draft = ""
-                due = .none
+                if manager.draftTitle == title {
+                    manager.draftTitle = ""
+                    manager.draftDue = .none
+                }
                 isInputFocused = true
             }
         }

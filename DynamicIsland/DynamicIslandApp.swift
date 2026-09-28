@@ -1523,21 +1523,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             guard Defaults[.enableShortcuts], Defaults[.enableTodoFeature] else { return }
 
-            if vm.notchState == .open && coordinator.currentView == .todo {
+            // 与剪贴板 notchTab 快捷键一致：「所有显示器」模式下操作鼠标所在屏幕的刘海
+            var activeVM = vm
+            var notchWindow = window
+            if Defaults[.showOnAllDisplays] {
+                let mouseLocation = NSEvent.mouseLocation
+                for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                    if let screenViewModel = viewModels[screen] {
+                        activeVM = screenViewModel
+                        notchWindow = windows[screen]
+                        break
+                    }
+                }
+            }
+
+            if activeVM.notchState == .open && coordinator.currentView == .todo {
                 coordinator.suppressHoverOpen()
-                vm.close()
+                activeVM.close()
                 return
             }
 
-            // 取消已排队的延时收起任务，避免刚打开待办页就被它收回
-            closeNotchWorkItem?.cancel()
-            closeNotchWorkItem = nil
-            if vm.notchState == .closed {
-                vm.open()
+            // ⌘⇧I 打开刘海时会排一个 3 秒后自动收起的任务，切到待办页要取消它，否则输入到一半刘海被收回
+            cancelPendingNotchAutoClose()
+            if activeVM.notchState == .closed {
+                activeVM.open()
             }
             coordinator.currentView = .todo
-            // 与 Terminal 快捷键一致只处理单屏的刘海窗口；拿不到窗口时不借焦点，避免激活了却无处输入
-            if let notchWindow = window {
+            // 拿不到刘海窗口时不借焦点，避免激活了 Atoll 却无处输入
+            if let notchWindow {
                 TodoKeyboardFocus.begin(window: notchWindow)
                 TodoManager.shared.requestInputFocus()
             }

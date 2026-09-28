@@ -18,11 +18,13 @@
 
 // Todo 纯逻辑行为探针。
 //
-// 待办页最容易出错的是三块纯逻辑：标题清洗、截止日期换算（跨月、跨时区）、列表排序与截止标签。
+// 待办页最容易出错的纯逻辑：标题清洗、截止日期换算（跨月跨年、时区、非公历系统日历）、
+// 列表排序与截止标签，以及快捷键借焦点后收起时焦点还给谁。
 // 它们只依赖 Foundation，命令行工具链即可编译运行，不需要 Xcode：
 //
 //     swiftc -o /tmp/todo_probe \
 //       DynamicIsland/managers/Todo/TodoItem.swift \
+//       DynamicIsland/managers/Todo/TodoFocusPolicy.swift \
 //       tests/todo_probe.swift && /tmp/todo_probe
 //
 // 退出码非零表示有断言失败。
@@ -69,6 +71,7 @@ struct TodoProbe {
         checkDueOptions()
         checkOrdering()
         checkDueLabels()
+        checkFocusReturn()
 
         print("\nchecks=\(checks) failures=\(failures)")
         exit(failures == 0 ? 0 : 1)
@@ -112,6 +115,14 @@ struct TodoProbe {
 
         let newYear = TodoDueOption.tomorrow.dueDateComponents(now: date(2026, 12, 31, 22), calendar: calendar)
         check("年末的明天跨到下一年", newYear?.year == 2027 && newYear?.month == 1 && newYear?.day == 1)
+
+        // 「今天」按传入日历的时区算：同一时刻在上海已是 29 日，在洛杉矶还是 28 日
+        let instant = date(2026, 9, 29, 4, 0)
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let shanghaiToday = TodoDueOption.today.dueDateComponents(now: instant, calendar: calendar)
+        let losAngelesToday = TodoDueOption.today.dueDateComponents(now: instant, calendar: losAngeles)
+        check("今天按传入日历的时区计算", shanghaiToday?.day == 29 && losAngelesToday?.day == 28)
     }
 
     static func checkOrdering() {
@@ -155,5 +166,22 @@ struct TodoProbe {
         let farAway = label(item("f", due: date(2026, 10, 15)))
         check("远期截止显示具体日期", farAway?.isOverdue == false
             && farAway.map { !$0.text.isEmpty && $0.text != "Today" && $0.text != "Tomorrow" } == true)
+    }
+
+    static func checkFocusReturn() {
+        print("收起后焦点去向")
+        func decide(active: Bool = true, otherKey: Bool = false, previous: Bool = false, app: Bool = true) -> TodoFocusReturn {
+            TodoFocusPolicy.decide(
+                atollIsActive: active,
+                keyWindowIsOther: otherKey,
+                previousWindowAvailable: previous,
+                returnAppAvailable: app
+            )
+        }
+        check("常规：还给借焦点前的前台 App", decide() == .returnApp)
+        check("用户已点到别的 App：不抢回", decide(active: false) == .keep)
+        check("焦点已在 Atoll 设置等其他窗口：不动", decide(otherKey: true, previous: true) == .keep)
+        check("借焦点前开着 Atoll 自己的窗口：还给那个窗口", decide(previous: true) == .previousWindow)
+        check("借焦点时 Atoll 已在前台且无窗口可还：让出前台", decide(app: false) == .deactivate)
     }
 }

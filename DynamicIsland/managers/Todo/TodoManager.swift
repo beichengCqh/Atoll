@@ -56,6 +56,9 @@ final class TodoManager: ObservableObject {
     @Published private(set) var completingIDs: Set<String> = []
     /// 输入框聚焦请求计数。快捷键打开待办页时递增，待办页监听到变化后把键盘焦点给输入框。
     @Published private(set) var inputFocusRequest = 0
+    /// 还没提交的输入与截止选项。放在这里而不是待办页视图里，刘海收起（视图销毁）后再打开草稿还在。
+    @Published var draftTitle = ""
+    @Published var draftDue: TodoDueOption = .none
 
     private let store = EKEventStore()
     private var listID = ""
@@ -116,8 +119,15 @@ final class TodoManager: ObservableObject {
 
     /// 重新读取列表与未完成待办。没有权限时清空展示，避免显示过期数据。
     func refresh() async {
+        await refresh(finishing: nil)
+    }
+
+    /// 重新读取；`finishedID` 是刚淡出完的已完成条目，在拿到新数据的同一轮里才解除它的完成态，
+    /// 避免读取期间那一行先闪回未勾选、勾选框又能点。
+    private func refresh(finishing finishedID: String?) async {
         accessState = Self.currentAccessState()
         guard accessState == .granted else {
+            if let finishedID { completingIDs.remove(finishedID) }
             items = []
             lists = []
             activeListTitle = nil
@@ -130,6 +140,7 @@ final class TodoManager: ObservableObject {
             .sorted { ($0.accountTitle, $0.title) < ($1.accountTitle, $1.title) }
 
         guard let calendar = resolveTargetCalendar() else {
+            if let finishedID { completingIDs.remove(finishedID) }
             items = []
             activeListTitle = nil
             lastError = "No writable Reminders list found."
@@ -138,6 +149,8 @@ final class TodoManager: ObservableObject {
         activeListTitle = calendar.title
 
         let fetched = await Self.fetchIncomplete(from: store, in: calendar)
+        if let finishedID { completingIDs.remove(finishedID) }
+        // 仍在淡出的条目保留旧行；重复提醒完成后以同一 ID 滚到下一次，淡出结束才换成新数据
         items = TodoLogic.sorted(fetched.filter { !completingIDs.contains($0.id) } + items.filter { completingIDs.contains($0.id) })
         lastError = nil
     }
@@ -191,8 +204,7 @@ final class TodoManager: ObservableObject {
         }
 
         try? await Task.sleep(for: completionLinger)
-        completingIDs.remove(item.id)
-        await refresh()
+        await refresh(finishing: item.id)
     }
 
     /// 删除一条待办（从「提醒事项」里移除），由用户在待办页右键菜单主动触发。
