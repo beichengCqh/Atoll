@@ -141,7 +141,7 @@ func enabledStandardTabCount() -> Int {
         count += 1
     }
 
-    // Todo tab
+    // 待办 tab
     if Defaults[.enableTodoFeature] {
         count += 1
     }

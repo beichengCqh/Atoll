@@ -72,8 +72,9 @@ class TodoConfigurationTests(unittest.TestCase):
     def test_coordinator_tracks_todo(self):
         order = slice_between(self.coordinator_source, "tabOrder: [NotchViews] = [", "]")
         self.assertIn(".todo", order, "tabOrder 缺 .todo，切换动画方向会错")
+        # 断言订阅调用点而不是函数名：只有函数定义、订阅被合并冲掉时也必须报警
         self.assertIn(
-            "handleTodoFeatureToggle",
+            "self?.handleTodoFeatureToggle(change.newValue)",
             self.coordinator_source,
             "关闭待办功能时没有退回首页，会停在一个已经不存在的 tab 上",
         )
@@ -98,7 +99,32 @@ class TodoConfigurationTests(unittest.TestCase):
             availability,
             "关闭待办功能或全局快捷键时，待办快捷键没有跟着停用",
         )
-        self.assertIn("requestInputFocus()", self.app_source, "快捷键打开待办页后没有请求聚焦输入框")
+        handler = slice_between(self.app_source, "onKeyDown(for: .toggleTodoTab)", "KeyboardShortcuts.onKeyDown(for:")
+        self.assertIn("requestInputFocus()", handler, "快捷键打开待办页后没有请求聚焦输入框")
+        self.assertIn(
+            "TodoKeyboardFocus.begin(window:",
+            handler,
+            "快捷键没有同步激活 Atoll 并设 key window，打开后立刻敲的字会落进原来的 App",
+        )
+
+    def test_keyboard_focus_is_returned_and_notch_can_be_dismissed(self):
+        closed_branch = slice_between(self.content_source, "if newState == .closed {", "} else {")
+        self.assertIn(
+            "TodoKeyboardFocus.end()",
+            closed_branch,
+            "刘海收起时没有归还前台：快捷键收起后 Atoll 仍在前台，之后的按键全部丢失",
+        )
+        monitor_guard = slice_between(self.content_source, "func syncStickyTerminalOutsideClickMonitor()", "installStickyTerminalClickMonitor()")
+        self.assertIn(".todo", monitor_guard, "快捷键打开的待办页点击外部无法收起")
+        todo_view = (SOURCE_ROOT / "components/Todo/NotchTodoView.swift").read_text()
+        self.assertIn(".onExitCommand", todo_view, "待办页输入框缺 Esc 收起")
+
+    def test_settings_does_not_prompt_when_disabled(self):
+        self.assertIn(
+            ".task(id: enableTodoFeature)",
+            self.todo_settings_source,
+            "设置页不论功能是否开启都会读取提醒事项，关闭功能时打开设置页也会弹权限框",
+        )
 
     def test_settings_tab_and_search_entries(self):
         self.assertIn("case todo", self.settings_source, "SettingsTab 缺 case todo")
@@ -122,13 +148,14 @@ class TodoProbeTests(unittest.TestCase):
             self.skipTest("swiftc is unavailable")
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / "todo_probe"
-            subprocess.run(
+            compiled = subprocess.run(
                 ["swiftc", "-o", str(executable), str(TODO_ITEM), str(PROBE)],
-                check=True,
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
             )
+            # 编译失败时把 swiftc 的诊断带进断言信息，CI 日志里才看得到错在哪
+            self.assertEqual(0, compiled.returncode, compiled.stderr)
             result = subprocess.run([str(executable)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 

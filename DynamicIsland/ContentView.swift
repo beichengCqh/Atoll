@@ -799,6 +799,7 @@ struct ContentView: View {
                 }
                 if newState == .closed {
                     removeStickyTerminalClickMonitor()
+                    TodoKeyboardFocus.end()
                 } else {
                     // Install the outside-click monitor for terminal opens that don't
                     // change `currentView` (e.g. shortcut re-opening with the terminal
@@ -2334,7 +2335,8 @@ struct ContentView: View {
     /// While the cursor is hovering inside the notch, hover handling owns close
     /// behavior, so the monitor is not installed; it is re-synced on hover-out.
     private func syncStickyTerminalOutsideClickMonitor() {
-        guard vm.notchState == .open, coordinator.currentView == .terminal, !isHovering else {
+        // 待办页同样可由快捷键打开、鼠标从不进入刘海，也需要点击外部即收起
+        guard vm.notchState == .open, [.terminal, .todo].contains(coordinator.currentView), !isHovering else {
             removeStickyTerminalClickMonitor()
             return
         }

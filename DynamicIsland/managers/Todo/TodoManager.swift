@@ -31,7 +31,7 @@ struct TodoReminderList: Identifiable, Equatable, Sendable {
 /// 刘海待办页的数据层：读写「提醒事项」。
 ///
 /// 待办页展示一个列表里全部未完成的提醒（含没设截止的），新建待办也写进这个列表，
-/// 因此会同步到 iPhone，Atoll 已有的提醒倒计时与锁屏提醒组件也能看到带截止的待办。
+/// 因此会同步到 iPhone 等其他设备。
 ///
 /// 列表 ID 由界面层从 Defaults 传入（`activate(listID:)` / `updateListID(_:)`），
 /// 本类不直接读 Defaults：空字符串表示使用系统默认的提醒列表。
@@ -169,7 +169,10 @@ final class TodoManager: ObservableObject {
         return true
     }
 
-    /// 勾选完成：写回「提醒事项」，短暂保留在列表里再移除。写入失败时恢复原状。
+    /// 勾选完成：写回「提醒事项」，短暂保留在列表里再重新读取。写入失败时把提醒恢复为未完成。
+    ///
+    /// 淡出结束后重新读取而不是直接从列表删掉：重复提醒完成后会以同一个 ID 滚到下一次，
+    /// 重新读取才能让下一次的待办留在列表里。
     func complete(_ item: TodoItem) async {
         guard let reminder = store.calendarItem(withIdentifier: item.id) as? EKReminder else {
             await refresh()
@@ -181,6 +184,7 @@ final class TodoManager: ObservableObject {
         do {
             try store.save(reminder, commit: true)
         } catch {
+            reminder.isCompleted = false
             completingIDs.remove(item.id)
             lastError = "Could not complete todo: \(error.localizedDescription)"
             return
@@ -188,7 +192,7 @@ final class TodoManager: ObservableObject {
 
         try? await Task.sleep(for: completionLinger)
         completingIDs.remove(item.id)
-        items.removeAll { $0.id == item.id }
+        await refresh()
     }
 
     /// 删除一条待办（从「提醒事项」里移除），由用户在待办页右键菜单主动触发。
@@ -270,9 +274,12 @@ final class TodoManager: ObservableObject {
 
 extension TodoItem {
     /// 从 EKReminder 取待办页需要的字段；没有时分的截止视为全天待办。
+    ///
+    /// EventKit 的日期分量是公历；分量没带日历时也按公历解读，系统日历是佛历等时年份才不会错位。
     init(reminder: EKReminder) {
         let components = reminder.dueDateComponents
-        let dueDate = components.flatMap { ($0.calendar ?? Calendar.current).date(from: $0) }
+        let fallback = TodoLogic.gregorianCalendar(timeZone: components?.timeZone ?? .current)
+        let dueDate = components.flatMap { ($0.calendar ?? fallback).date(from: $0) }
         self.init(
             id: reminder.calendarItemIdentifier,
             title: reminder.title ?? "",

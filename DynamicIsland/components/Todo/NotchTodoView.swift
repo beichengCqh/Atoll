@@ -25,13 +25,12 @@ import SwiftUI
 /// 读写都经 `TodoManager`，本视图只管输入与展示；排序由 manager 负责，按数组顺序渲染即可。
 struct NotchTodoView: View {
     @ObservedObject private var manager = TodoManager.shared
+    @EnvironmentObject private var vm: DynamicIslandViewModel
     @Default(.todoReminderListID) private var listID
 
     @State private var draft = ""
     @State private var due: TodoDueOption = .none
     @FocusState private var isInputFocused: Bool
-    /// 承载本视图的刘海窗口，快捷键聚焦时要先把它设为 key window，输入框才收得到键盘。
-    @State private var hostWindow: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -47,7 +46,6 @@ struct NotchTodoView: View {
         .padding(.horizontal, 8)
         // 刘海内固定深色，跟随系统浅色主题会让文字与卡片背景一起变白看不见
         .environment(\.colorScheme, .dark)
-        .background(TodoWindowReader(window: $hostWindow))
         .task { await manager.activate(listID: listID) }
         .onAppear {
             if manager.consumeInputFocusRequest() { focusInput() }
@@ -86,6 +84,8 @@ struct NotchTodoView: View {
                 .font(.system(size: 12))
                 .focused($isInputFocused)
                 .onSubmit(addDraft)
+                // Esc 收起刘海；焦点归还由刘海收起时的 TodoKeyboardFocus.end() 统一处理
+                .onExitCommand { vm.close() }
                 .disabled(manager.accessState != .granted)
             dueChip
             Button(action: addDraft) {
@@ -216,25 +216,15 @@ struct NotchTodoView: View {
         }
     }
 
-    /// 刘海面板默认不抢键盘：先激活 Atoll、把刘海窗口设为 key window，再把焦点给输入框。
+    /// 把键盘焦点给输入框。激活 Atoll 与设 key window 已由快捷键处理里的
+    /// `TodoKeyboardFocus.begin(window:)` 同步完成，这里只负责 SwiftUI 侧的焦点。
     ///
-    /// 快捷键打开时视图刚创建，窗口引用要下一轮 runloop 才取到，取不到就稍后重试几次。
-    private func focusInput(attemptsRemaining: Int = 3) {
-        guard let window = hostWindow else {
-            guard attemptsRemaining > 0 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                focusInput(attemptsRemaining: attemptsRemaining - 1)
-            }
-            return
+    /// 视图刚创建时同一轮设置的焦点可能被忽略，所以下一轮 runloop 设一次、稍后再补一次。
+    private func focusInput() {
+        DispatchQueue.main.async {
+            isInputFocused = true
         }
-        if !NSApp.isActive {
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        if !window.isKeyWindow {
-            window.makeKey()
-        }
-        // 等窗口成为 key window 之后再设焦点，同一轮设置会被忽略
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             isInputFocused = true
         }
     }
@@ -290,25 +280,5 @@ private struct TodoRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: Text("Mark as done"), onComplete)
         .accessibilityAction(named: Text("Delete"), onDelete)
-    }
-}
-
-// MARK: - 窗口获取
-
-/// 取到承载 SwiftUI 视图的 NSWindow，供快捷键聚焦时把刘海窗口设为 key window。
-private struct TodoWindowReader: NSViewRepresentable {
-    @Binding var window: NSWindow?
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        // 视图挂进窗口要等到下一轮 runloop，makeNSView 当下 view.window 还是 nil
-        DispatchQueue.main.async { window = view.window }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if nsView.window !== window {
-            DispatchQueue.main.async { window = nsView.window }
-        }
     }
 }

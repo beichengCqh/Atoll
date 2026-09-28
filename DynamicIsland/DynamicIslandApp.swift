@@ -1517,7 +1517,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // 待办快捷键：刘海关着就打开到待办页并聚焦输入框；已在待办页再按一次收起刘海
+        // 待办快捷键：打开到待办页并聚焦输入框；已在待办页再按一次收起刘海。
+        // 收起后的前台归还由 ContentView 在刘海收起时调用 TodoKeyboardFocus.end() 完成。
         KeyboardShortcuts.onKeyDown(for: .toggleTodoTab) { [weak self] in
             guard let self else { return }
             guard Defaults[.enableShortcuts], Defaults[.enableTodoFeature] else { return }
@@ -1528,14 +1529,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            // 取消已排队的自动收起，否则刚打开就可能因为鼠标不在刘海上而被收回
+            // 取消已排队的延时收起任务，避免刚打开待办页就被它收回
             closeNotchWorkItem?.cancel()
             closeNotchWorkItem = nil
             if vm.notchState == .closed {
                 vm.open()
             }
             coordinator.currentView = .todo
-            TodoManager.shared.requestInputFocus()
+            // 与 Terminal 快捷键一致只处理单屏的刘海窗口；拿不到窗口时不借焦点，避免激活了却无处输入
+            if let notchWindow = window {
+                TodoKeyboardFocus.begin(window: notchWindow)
+                TodoManager.shared.requestInputFocus()
+            }
         }
 
         KeyboardShortcuts.onKeyDown(for: .screenAssistantPanel) { [weak self] in

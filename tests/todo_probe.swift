@@ -97,6 +97,21 @@ struct TodoProbe {
         check("月末的明天跨到下个月", monthEnd?.year == 2026 && monthEnd?.month == 10 && monthEnd?.day == 1)
 
         check("无截止返回 nil", TodoDueOption.none.dueDateComponents(now: lateNight, calendar: calendar) == nil)
+
+        // 系统日历是佛历时，EKReminder 收到非公历分量会抛异常让 App 崩溃，这里必须仍输出公历分量
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = calendar.timeZone
+        let fromBuddhist = TodoDueOption.today.dueDateComponents(now: lateNight, calendar: buddhist)
+        check("佛历系统下仍输出公历日历", fromBuddhist?.calendar?.identifier == .gregorian)
+        check("佛历系统下年份仍是公历年份", fromBuddhist?.year == 2026 && fromBuddhist?.day == 28)
+
+        var japanese = Calendar(identifier: .japanese)
+        japanese.timeZone = calendar.timeZone
+        let fromJapanese = TodoDueOption.tomorrow.dueDateComponents(now: lateNight, calendar: japanese)
+        check("日本历系统下仍输出公历分量", fromJapanese?.calendar?.identifier == .gregorian && fromJapanese?.year == 2026)
+
+        let newYear = TodoDueOption.tomorrow.dueDateComponents(now: date(2026, 12, 31, 22), calendar: calendar)
+        check("年末的明天跨到下一年", newYear?.year == 2027 && newYear?.month == 1 && newYear?.day == 1)
     }
 
     static func checkOrdering() {

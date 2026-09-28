@@ -73,7 +73,11 @@ struct TodoSettings: View {
             }
         }
         .navigationTitle("Todo")
-        .task { await manager.activate(listID: listID) }
+        // 只在功能开启时读取「提醒事项」：关着功能打开设置页，不应弹出系统权限申请
+        .task(id: enableTodoFeature) {
+            guard enableTodoFeature else { return }
+            await manager.activate(listID: listID)
+        }
         .onChange(of: listID) { _, newValue in
             Task { await manager.updateListID(newValue) }
         }

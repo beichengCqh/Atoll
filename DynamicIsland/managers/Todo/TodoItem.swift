@@ -51,8 +51,11 @@ enum TodoDueOption: String, CaseIterable, Identifiable, Sendable {
 
     /// 返回全天截止的年月日分量；`.none` 返回 nil。
     ///
-    /// 只给年月日、不给时分，「提醒事项」会把它当成当天的全天待办，而不是在某个时刻弹提醒。
+    /// 只给年月日、不给时分，「提醒事项」会把它当成当天的全天待办，在当天显示。
     /// 不带时区（浮动日期），与「提醒事项」自己创建的全天待办一致：换时区后仍落在同一天。
+    ///
+    /// 分量一律按公历生成：EKReminder.dueDateComponents 只接受公历，传入佛历、日本历等会直接抛
+    /// NSInvalidArgumentException 让 App 崩溃。传入的 `calendar` 只用来确定「今天」按哪个时区算。
     func dueDateComponents(now: Date, calendar: Calendar) -> DateComponents? {
         let dayOffset: Int
         switch self {
@@ -60,10 +63,11 @@ enum TodoDueOption: String, CaseIterable, Identifiable, Sendable {
         case .today: dayOffset = 0
         case .tomorrow: dayOffset = 1
         }
-        let startOfToday = calendar.startOfDay(for: now)
-        guard let target = calendar.date(byAdding: .day, value: dayOffset, to: startOfToday) else { return nil }
-        var components = calendar.dateComponents([.year, .month, .day], from: target)
-        components.calendar = calendar
+        let gregorian = TodoLogic.gregorianCalendar(timeZone: calendar.timeZone)
+        let startOfToday = gregorian.startOfDay(for: now)
+        guard let target = gregorian.date(byAdding: .day, value: dayOffset, to: startOfToday) else { return nil }
+        var components = gregorian.dateComponents([.year, .month, .day], from: target)
+        components.calendar = gregorian
         return components
     }
 }
@@ -76,6 +80,13 @@ struct TodoDueLabel: Equatable, Sendable {
 
 /// 待办页的纯逻辑，与 EventKit、界面都无关。
 enum TodoLogic {
+    /// 指定时区的公历。与「提醒事项」交换日期分量时一律用它，系统日历设成佛历等也不受影响。
+    static func gregorianCalendar(timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
     /// 清洗用户输入的标题：换行折叠成空格，去掉首尾空白；清洗后为空返回 nil，调用方据此拒绝添加。
     static func normalizedTitle(_ raw: String) -> String? {
         let singleLine = raw.components(separatedBy: .newlines).joined(separator: " ")
