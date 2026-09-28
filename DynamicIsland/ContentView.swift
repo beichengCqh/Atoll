@@ -222,6 +222,11 @@ struct ContentView: View {
             return CGSize(width: baseSize.width, height: 320)
         }
 
+        // 待办页上方是输入行，下方是可滚动列表，与 inbox 同高
+        if coordinator.currentView == .todo {
+            return CGSize(width: baseSize.width, height: 320)
+        }
+
         if coordinator.currentView == .extensionExperience {
             if let preferredHeight = extensionTabPreferredHeight(baseSize: baseSize) {
                 return CGSize(width: baseSize.width, height: preferredHeight)
@@ -1349,6 +1354,8 @@ struct ContentView: View {
                                 NotchToolView()
                             case .inbox:
                                 NotchInboxView()
+                            case .todo:
+                                NotchTodoView()
                             case .extensionExperience:
                                 if let payload = currentExtensionTabPayload() {
                                     ExtensionNotchExperienceTabView(payload: payload)

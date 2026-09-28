@@ -939,6 +939,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }.store(in: &cancellables)
 
+        Defaults.publisher(.enableTodoFeature, options: []).sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateFeatureShortcutAvailability()
+            }
+        }.store(in: &cancellables)
+
         // The hide option changes fullscreen visibility, not Spaces pinning.
         // Re-sync in case the user changes it while macOS is moving Spaces.
         Defaults.publisher(.hideNotchOption, options: []).sink { [weak self] _ in
@@ -1511,6 +1517,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // 待办快捷键：刘海关着就打开到待办页并聚焦输入框；已在待办页再按一次收起刘海
+        KeyboardShortcuts.onKeyDown(for: .toggleTodoTab) { [weak self] in
+            guard let self else { return }
+            guard Defaults[.enableShortcuts], Defaults[.enableTodoFeature] else { return }
+
+            if vm.notchState == .open && coordinator.currentView == .todo {
+                coordinator.suppressHoverOpen()
+                vm.close()
+                return
+            }
+
+            // 取消已排队的自动收起，否则刚打开就可能因为鼠标不在刘海上而被收回
+            closeNotchWorkItem?.cancel()
+            closeNotchWorkItem = nil
+            if vm.notchState == .closed {
+                vm.open()
+            }
+            coordinator.currentView = .todo
+            TodoManager.shared.requestInputFocus()
+        }
+
         KeyboardShortcuts.onKeyDown(for: .screenAssistantPanel) { [weak self] in
             guard let self else { return }
             guard Defaults[.enableShortcuts], Defaults[.enableScreenAssistant] else { return }
@@ -1539,6 +1566,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateShortcut(.screenAssistantPanel, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableScreenAssistant])
         updateShortcut(.toggleTerminalTab, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableTerminalFeature])
         updateShortcut(.toggleCaffeinate, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableCaffeinate])
+        updateShortcut(.toggleTodoTab, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableTodoFeature])
     }
 
     @MainActor

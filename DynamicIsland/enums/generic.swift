@@ -82,6 +82,7 @@ public enum NotchViews {
     case terminal
     case tool
     case inbox
+    case todo
     case extensionExperience
 }
 

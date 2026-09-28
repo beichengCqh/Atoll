@@ -55,6 +55,7 @@ struct TabSelectionView: View {
     @Default(.enableToolFeature) var enableToolFeature
     // 少了这个 @Default，开关切换后 tab 栏不会重新求值，新 tab 要等下次别的变更才出现
     @Default(.enableClaudeInbox) var enableClaudeInbox
+    @Default(.enableTodoFeature) var enableTodoFeature
     @Default(.timerDisplayMode) var timerDisplayMode
     @Default(.enableThirdPartyExtensions) private var enableThirdPartyExtensions
     @Default(.enableExtensionNotchExperiences) private var enableExtensionNotchExperiences
@@ -103,6 +104,9 @@ struct TabSelectionView: View {
         }
         if enableClaudeInbox {
             tabsArray.append(TabModel(label: "Inbox", icon: "tray.full", view: .inbox))
+        }
+        if enableTodoFeature {
+            tabsArray.append(TabModel(label: "Todo", icon: "checklist", view: .todo))
         }
         if extensionTabsEnabled {
             for payload in extensionTabPayloads {

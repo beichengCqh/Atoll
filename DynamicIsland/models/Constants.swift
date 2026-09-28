@@ -1326,7 +1326,12 @@ extension Defaults.Keys {
 
     // MARK: Tool Feature
     static let enableToolFeature = Key<Bool>("enableToolFeature", default: true)
-    
+
+    // MARK: Todo Feature
+    static let enableTodoFeature = Key<Bool>("enableTodoFeature", default: true)
+    /// 待办写入与展示的「提醒事项」列表 ID；空字符串表示系统默认的提醒列表。
+    static let todoReminderListID = Key<String>("todoReminderListID", default: "")
+
     // MARK: Timer Feature
     static let enableTimerFeature = Key<Bool>("enableTimerFeature", default: true)
     static let timerDisplayMode = Key<TimerDisplayMode>("timerDisplayMode", default: .tab)

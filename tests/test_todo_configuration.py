@@ -1,0 +1,137 @@
+"""Todo 待办功能的回归测试。
+
+两部分：
+1. 接入点文本断言。待办页要在 tab 栏、内容区、尺寸、设置侧栏、搜索索引、快捷键多处接入，
+   漏掉任何一处编译器都不报错，功能只是静默不出现。每天自动合并上游时最容易被冲掉的也是这些行。
+2. 编译并运行 tests/todo_probe.swift，真跑一遍标题清洗、截止日期换算、排序与截止标签的纯逻辑。
+"""
+
+import re
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = ROOT / "DynamicIsland"
+TODO_ITEM = SOURCE_ROOT / "managers/Todo/TodoItem.swift"
+PROBE = ROOT / "tests/todo_probe.swift"
+
+
+def slice_between(source, start_marker, end_marker):
+    """截取 start_marker 之后、其后首个 end_marker 之前的片段；任一标记缺失时返回空串。
+
+    把断言限定在某个函数体或数组字面量内部，避免同名符号在文件别处出现就误判通过。
+    """
+    start = source.find(start_marker)
+    if start == -1:
+        return ""
+    start += len(start_marker)
+    end = source.find(end_marker, start)
+    if end == -1:
+        return ""
+    return source[start:end]
+
+
+class TodoConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.generic_source = (SOURCE_ROOT / "enums/generic.swift").read_text()
+        self.constants_source = (SOURCE_ROOT / "models/Constants.swift").read_text()
+        self.shortcut_source = (SOURCE_ROOT / "Shortcuts/ShortcutConstants.swift").read_text()
+        self.coordinator_source = (SOURCE_ROOT / "DynamicIslandViewCoordinator.swift").read_text()
+        self.tab_source = (SOURCE_ROOT / "components/Tabs/TabSelectionView.swift").read_text()
+        self.content_source = (SOURCE_ROOT / "ContentView.swift").read_text()
+        self.sizing_source = (SOURCE_ROOT / "sizing/matters.swift").read_text()
+        self.settings_source = (SOURCE_ROOT / "components/Settings/SettingsView.swift").read_text()
+        self.todo_settings_source = (SOURCE_ROOT / "components/Settings/TodoSettings.swift").read_text()
+        self.app_source = (SOURCE_ROOT / "DynamicIslandApp.swift").read_text()
+        self.gitignore_source = (ROOT / ".gitignore").read_text()
+
+    def test_notch_view_is_registered(self):
+        self.assertIn("case todo", self.generic_source, "NotchViews 缺 case todo")
+        self.assertIn("case .todo:", self.content_source, "ContentView 的内容 switch 缺 .todo 分支")
+        self.assertIn("NotchTodoView()", self.content_source, "ContentView 没有渲染 NotchTodoView")
+        self.assertIn(
+            "coordinator.currentView == .todo",
+            self.content_source,
+            "ContentView 没给待办页设置高度，列表会被压成默认高度",
+        )
+
+    def test_tab_is_shown_and_counted(self):
+        tabs = slice_between(self.tab_source, "private var tabs: [TabModel]", "var body: some View")
+        self.assertIn("view: .todo", tabs, "tab 栏没有追加 Todo 标签")
+        self.assertIn(
+            "@Default(.enableTodoFeature)",
+            self.tab_source,
+            "TabSelectionView 缺 @Default(.enableTodoFeature)：开关切换后 tab 栏不会重新求值",
+        )
+        self.assertIn("Defaults[.enableTodoFeature]", self.sizing_source, "matters.swift 的 tab 计数漏了待办页")
+
+    def test_coordinator_tracks_todo(self):
+        order = slice_between(self.coordinator_source, "tabOrder: [NotchViews] = [", "]")
+        self.assertIn(".todo", order, "tabOrder 缺 .todo，切换动画方向会错")
+        self.assertIn(
+            "handleTodoFeatureToggle",
+            self.coordinator_source,
+            "关闭待办功能时没有退回首页，会停在一个已经不存在的 tab 上",
+        )
+        self.assertIn(
+            "Defaults.publisher(.enableTodoFeature).map",
+            self.coordinator_source,
+            "开关待办功能后没有重算刘海最小宽度",
+        )
+
+    def test_defaults_keys_exist(self):
+        self.assertRegex(self.constants_source, r'Key<Bool>\("enableTodoFeature", default: true\)')
+        self.assertRegex(self.constants_source, r'Key<String>\("todoReminderListID", default: ""\)')
+
+    def test_shortcut_is_defined_and_wired(self):
+        self.assertIn('Self("toggleTodoTab"', self.shortcut_source)
+        self.assertIn("onKeyDown(for: .toggleTodoTab)", self.app_source, "快捷键没有注册处理函数")
+        availability = slice_between(
+            self.app_source, "private func updateFeatureShortcutAvailability()", "\n    }\n"
+        )
+        self.assertIn(
+            "updateShortcut(.toggleTodoTab",
+            availability,
+            "关闭待办功能或全局快捷键时，待办快捷键没有跟着停用",
+        )
+        self.assertIn("requestInputFocus()", self.app_source, "快捷键打开待办页后没有请求聚焦输入框")
+
+    def test_settings_tab_and_search_entries(self):
+        self.assertIn("case todo", self.settings_source, "SettingsTab 缺 case todo")
+        ordered = slice_between(self.settings_source, "let ordered: [SettingsTab] = [", "]")
+        self.assertIn(".todo", ordered, "设置侧栏没有列出待办页")
+        self.assertIn("TodoSettings(highlightID:", self.settings_source, "设置详情没有渲染 TodoSettings")
+
+        # 搜索条目的 title 必须与 TodoSettings 里 highlightID(...) 的字符串逐字一致，否则跳转后不高亮
+        entry_titles = set(re.findall(r'SettingsSearchEntry\(tab: \.todo, title: "([^"]+)"', self.settings_source))
+        highlight_titles = set(re.findall(r'highlightID\("([^"]+)"\)', self.todo_settings_source))
+        self.assertTrue(entry_titles, "搜索索引里没有待办页条目")
+        self.assertEqual(entry_titles, highlight_titles, "搜索条目与设置页高亮标题不一致")
+
+    def test_test_files_are_tracked(self):
+        self.assertIn("!tests/test_todo_configuration.py", self.gitignore_source)
+
+
+class TodoProbeTests(unittest.TestCase):
+    def test_probe_passes(self):
+        if shutil.which("swiftc") is None:
+            self.skipTest("swiftc is unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "todo_probe"
+            subprocess.run(
+                ["swiftc", "-o", str(executable), str(TODO_ITEM), str(PROBE)],
+                check=True,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            result = subprocess.run([str(executable)], cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

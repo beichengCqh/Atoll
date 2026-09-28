@@ -141,6 +141,11 @@ func enabledStandardTabCount() -> Int {
         count += 1
     }
 
+    // Todo tab
+    if Defaults[.enableTodoFeature] {
+        count += 1
+    }
+
     return count
 }
 

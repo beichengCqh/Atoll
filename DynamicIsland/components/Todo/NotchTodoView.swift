@@ -1,0 +1,314 @@
+/*
+ * Atoll (DynamicIsland)
+ * Copyright (C) 2024-2026 Atoll Contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import AppKit
+import Defaults
+import SwiftUI
+
+/// 灵动岛展开后的待办页：顶部输入框随手记，下方是「提醒事项」里一个列表的未完成待办。
+///
+/// 读写都经 `TodoManager`，本视图只管输入与展示；排序由 manager 负责，按数组顺序渲染即可。
+struct NotchTodoView: View {
+    @ObservedObject private var manager = TodoManager.shared
+    @Default(.todoReminderListID) private var listID
+
+    @State private var draft = ""
+    @State private var due: TodoDueOption = .none
+    @FocusState private var isInputFocused: Bool
+    /// 承载本视图的刘海窗口，快捷键聚焦时要先把它设为 key window，输入框才收得到键盘。
+    @State private var hostWindow: NSWindow?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            inputRow
+            content
+            if let error = manager.lastError {
+                Text(error)
+                    .font(.system(size: 10)).foregroundStyle(Color.orange)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 8)
+        // 刘海内固定深色，跟随系统浅色主题会让文字与卡片背景一起变白看不见
+        .environment(\.colorScheme, .dark)
+        .background(TodoWindowReader(window: $hostWindow))
+        .task { await manager.activate(listID: listID) }
+        .onAppear {
+            if manager.consumeInputFocusRequest() { focusInput() }
+        }
+        .onChange(of: listID) { _, newValue in
+            Task { await manager.updateListID(newValue) }
+        }
+        .onChange(of: manager.inputFocusRequest) { _, _ in
+            if manager.consumeInputFocusRequest() { focusInput() }
+        }
+    }
+
+    // MARK: - 顶栏
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checklist")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(manager.activeListTitle ?? "Reminders")
+                .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+            Spacer(minLength: 8)
+            if manager.accessState == .granted {
+                Text("\(openCount) open")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(height: 18)
+    }
+
+    // MARK: - 输入行
+
+    private var inputRow: some View {
+        HStack(spacing: 6) {
+            TextField("Add a todo…", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($isInputFocused)
+                .onSubmit(addDraft)
+                .disabled(manager.accessState != .granted)
+            dueChip
+            Button(action: addDraft) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(canAdd ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canAdd)
+            .help("Add todo (Return)")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// 截止日期开关：单击在 无 → 今天 → 明天 之间循环，比下拉菜单少一次点击。
+    private var dueChip: some View {
+        Button {
+            let options = TodoDueOption.allCases
+            let next = (options.firstIndex(of: due) ?? 0) + 1
+            due = options[next % options.count]
+        } label: {
+            Label(due.label, systemImage: "calendar")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(due == .none ? Color.secondary : Color.accentColor)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(.white.opacity(due == .none ? 0.05 : 0.12), in: Capsule())
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help("Due date: click to cycle No date / Today / Tomorrow")
+    }
+
+    // MARK: - 内容区
+
+    @ViewBuilder
+    private var content: some View {
+        switch manager.accessState {
+        case .notDetermined:
+            accessPrompt(
+                message: "Todos are saved to Apple Reminders.",
+                buttonTitle: "Allow Reminders Access"
+            ) {
+                Task { await manager.requestAccess(); await manager.refresh() }
+            }
+        case .denied:
+            accessPrompt(
+                message: "Reminders access is off for Atoll.",
+                buttonTitle: "Open System Settings"
+            ) {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        case .granted:
+            if manager.items.isEmpty {
+                emptyState
+            } else {
+                list
+            }
+        }
+    }
+
+    private var list: some View {
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(manager.items) { item in
+                    TodoRow(
+                        item: item,
+                        isCompleting: manager.completingIDs.contains(item.id),
+                        onComplete: { Task { await manager.complete(item) } },
+                        onDelete: { Task { await manager.delete(item) } }
+                    )
+                }
+            }
+            .padding(.bottom, 6)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 5) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 20)).foregroundStyle(.secondary)
+            Text("All done").font(.system(size: 12, weight: .semibold))
+            Text("Type above and press Return to add a todo")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func accessPrompt(message: String, buttonTitle: String, action: @escaping () -> Void) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "checklist")
+                .font(.system(size: 20)).foregroundStyle(.secondary)
+            Text(message).font(.system(size: 11)).foregroundStyle(.secondary)
+            Button(buttonTitle, action: action)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - 动作
+
+    private var openCount: Int {
+        manager.items.filter { !manager.completingIDs.contains($0.id) }.count
+    }
+
+    private var canAdd: Bool {
+        manager.accessState == .granted && TodoLogic.normalizedTitle(draft) != nil
+    }
+
+    /// 添加成功才清空输入并把截止重置为无；失败保留原文，错误提示由 manager 给出。
+    private func addDraft() {
+        guard canAdd else { return }
+        let title = draft
+        let chosenDue = due
+        Task {
+            if await manager.add(title: title, due: chosenDue) {
+                draft = ""
+                due = .none
+                isInputFocused = true
+            }
+        }
+    }
+
+    /// 刘海面板默认不抢键盘：先激活 Atoll、把刘海窗口设为 key window，再把焦点给输入框。
+    ///
+    /// 快捷键打开时视图刚创建，窗口引用要下一轮 runloop 才取到，取不到就稍后重试几次。
+    private func focusInput(attemptsRemaining: Int = 3) {
+        guard let window = hostWindow else {
+            guard attemptsRemaining > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                focusInput(attemptsRemaining: attemptsRemaining - 1)
+            }
+            return
+        }
+        if !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if !window.isKeyWindow {
+            window.makeKey()
+        }
+        // 等窗口成为 key window 之后再设焦点，同一轮设置会被忽略
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            isInputFocused = true
+        }
+    }
+}
+
+// MARK: - 单条待办
+
+/// 待办列表里的一行：左侧圆圈勾选完成，右侧显示截止标签，右键可删除。
+private struct TodoRow: View {
+    let item: TodoItem
+    let isCompleting: Bool
+    let onComplete: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onComplete) {
+                Image(systemName: isCompleting ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isCompleting ? Color.green : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(isCompleting)
+            .help("Mark as done")
+
+            Text(item.title)
+                .font(.system(size: 12))
+                .strikethrough(isCompleting)
+                .foregroundStyle(isCompleting ? Color.secondary : Color.primary)
+                .lineLimit(2).truncationMode(.tail)
+
+            Spacer(minLength: 4)
+
+            if let label = TodoLogic.dueLabel(for: item, now: .now, calendar: .current) {
+                Text(label.text)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(label.isOverdue ? Color.red : Color.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.white.opacity(isHovered ? 0.1 : 0.06), in: RoundedRectangle(cornerRadius: 10))
+        .opacity(isCompleting ? 0.5 : 1)
+        .animation(.easeOut(duration: 0.2), value: isCompleting)
+        .onHover { isHovered = $0 }
+        .contextMenu {
+            Button("Delete", role: .destructive, action: onDelete)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: Text("Mark as done"), onComplete)
+        .accessibilityAction(named: Text("Delete"), onDelete)
+    }
+}
+
+// MARK: - 窗口获取
+
+/// 取到承载 SwiftUI 视图的 NSWindow，供快捷键聚焦时把刘海窗口设为 key window。
+private struct TodoWindowReader: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // 视图挂进窗口要等到下一轮 runloop，makeNSView 当下 view.window 还是 nil
+        DispatchQueue.main.async { window = view.window }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if nsView.window !== window {
+            DispatchQueue.main.async { window = nsView.window }
+        }
+    }
+}

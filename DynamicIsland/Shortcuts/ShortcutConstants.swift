@@ -34,4 +34,6 @@ extension KeyboardShortcuts.Name {
     static let toggleTerminalTab = Self("toggleTerminalTab", default: .init(.backtick, modifiers: [.control]))
     static let startDemoTimer = Self("startDemoTimer", default: .init(.t, modifiers: [.command, .shift]))
     static let toggleCaffeinate = Self("toggleCaffeinate", default: .init(.k, modifiers: [.command, .shift]))
+    /// 打开刘海待办页并聚焦输入框；⌃⌥T 避开浏览器等常用的 ⌘⇧T。
+    static let toggleTodoTab = Self("toggleTodoTab", default: .init(.t, modifiers: [.control, .option]))
 }

@@ -105,7 +105,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hoverOpenSuppressedUntil: Date = .distantPast
     
-    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .tool, .inbox, .extensionExperience]
+    private static let tabOrder: [NotchViews] = [.home, .shelf, .timer, .stats, .llmUsage, .colorPicker, .notes, .clipboard, .terminal, .tool, .inbox, .todo, .extensionExperience]
     
     /// Direction of the most recent tab switch (true = forward/right, false = backward/left)
     @Published var tabSwitchForward: Bool = true
@@ -193,6 +193,13 @@ class DynamicIslandViewCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
+        Defaults.publisher(.enableTodoFeature)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] change in
+                self?.handleTodoFeatureToggle(change.newValue)
+            }
+            .store(in: &cancellables)
+
         Defaults.publisher(.enableClaudeInbox)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] change in
@@ -252,6 +259,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
             Defaults.publisher(.enableTerminalFeature).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableToolFeature).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableClaudeInbox).map { _ in () }.eraseToAnyPublisher(),
+            Defaults.publisher(.enableTodoFeature).map { _ in () }.eraseToAnyPublisher(),
             Defaults.publisher(.enableMinimalisticUI).map { _ in () }.eraseToAnyPublisher()
         )
         .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
@@ -295,6 +303,14 @@ class DynamicIslandViewCoordinator: ObservableObject {
 
     private func handleToolFeatureToggle(_ isEnabled: Bool) {
         guard !isEnabled, currentView == .tool else { return }
+        withAnimation(.smooth) {
+            currentView = .home
+        }
+    }
+
+    /// 关闭待办功能时，若当前正停在待办页就退回首页，避免留在一个已经不存在的 tab 上。
+    private func handleTodoFeatureToggle(_ isEnabled: Bool) {
+        guard !isEnabled, currentView == .todo else { return }
         withAnimation(.smooth) {
             currentView = .home
         }

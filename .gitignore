@@ -145,6 +145,7 @@ PrivateWorks
 !tests/test_tool_feature_configuration.py
 !tests/test_claude_inbox_configuration.py
 !tests/test_fork_release.py
+!tests/test_todo_configuration.py
 !scripts/fork_release.py
 __pycache__/
 *.sh

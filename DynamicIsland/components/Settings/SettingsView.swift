@@ -68,6 +68,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case notes
     case terminal
     case inbox
+    case todo
     case about
 
     var id: String { rawValue }
@@ -78,7 +79,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .general, .appearance:                                          return .core
         case .media, .liveActivities, .lockScreen, .devices:                 return .mediaAndDisplay
         case .hudAndOSD, .battery:                                           return .system
-        case .timer, .calendar, .notes:                                      return .productivity
+        case .timer, .calendar, .notes, .todo:                               return .productivity
         case .clipboard, .screenAssistant, .colorPicker, .tools, .shelf,
              .downloads, .shortcuts:                                         return .utilities
         case .stats, .terminal:                                              return .developer
@@ -111,6 +112,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .notes: return String(localized: "Notes")
         case .terminal: return String(localized: "Terminal")
         case .inbox: return String(localized: "Inbox")
+        case .todo: return String(localized: "Todo")
         case .about: return String(localized: "About")
         }
     }
@@ -139,6 +141,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .notes: return "note.text"
         case .terminal: return "apple.terminal"
         case .inbox: return "tray.full"
+        case .todo: return "checklist"
         case .about: return "info.circle"
         }
     }
@@ -167,6 +170,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .notes: return Color(red: 0.979, green: 0.716, blue: 0.153, opacity: 1.000)
         case .terminal: return Color(red: 0.2, green: 0.8, blue: 0.4)
         case .inbox: return .orange
+        case .todo: return .blue
         case .about: return .secondary
         }
     }
@@ -499,6 +503,11 @@ private enum SettingsSearchIndex {
         SettingsSearchEntry(tab: .inbox, title: "Show count badge when closed", keywords: ["inbox", "badge", "live activity", "count"], highlightID: SettingsTab.inbox.highlightID(for: "Show count badge when closed")),
         SettingsSearchEntry(tab: .inbox, title: "Banner duration", keywords: ["inbox", "banner", "sneak peek", "duration"], highlightID: SettingsTab.inbox.highlightID(for: "Banner duration")),
         SettingsSearchEntry(tab: .inbox, title: "Send test delivery", keywords: ["inbox", "test", "diagnose", "self check"], highlightID: SettingsTab.inbox.highlightID(for: "Send test delivery")),
+
+        // Todo。title 必须与 TodoSettings 里 settingsHighlight 的字符串逐字一致
+        SettingsSearchEntry(tab: .todo, title: "Enable Todo", keywords: ["todo", "task", "reminders", "checklist"], highlightID: SettingsTab.todo.highlightID(for: "Enable Todo")),
+        SettingsSearchEntry(tab: .todo, title: "Reminders list", keywords: ["todo", "reminders", "list", "icloud"], highlightID: SettingsTab.todo.highlightID(for: "Reminders list")),
+        SettingsSearchEntry(tab: .todo, title: "Open Todo shortcut", keywords: ["todo", "shortcut", "hotkey", "keyboard"], highlightID: SettingsTab.todo.highlightID(for: "Open Todo shortcut")),
     ]
 
     /// Which segment of the Lock Screen tab a search result lives on, or nil
@@ -828,6 +837,7 @@ struct SettingsView: View {
             .timer,
             .calendar,
             .notes,
+            .todo,
             // Utilities
             .clipboard,
             .screenAssistant,
@@ -1129,6 +1139,10 @@ struct SettingsView: View {
         case .inbox:
             SettingsForm(tab: .inbox) {
                 InboxSettings()
+            }
+        case .todo:
+            SettingsForm(tab: .todo) {
+                TodoSettings(highlightID: { SettingsTab.todo.highlightID(for: $0) })
             }
         case .about:
             if let controller = updaterController {
