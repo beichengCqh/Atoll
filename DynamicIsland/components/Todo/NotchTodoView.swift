@@ -29,8 +29,6 @@ struct NotchTodoView: View {
     @Default(.todoReminderListID) private var listID
 
     @FocusState private var isInputFocused: Bool
-    /// 输入框的光标 / 选区。聚焦时放到草稿末尾：文本框获得焦点默认全选，接着打字会把保留的草稿整段替换掉。
-    @State private var inputSelection: TextSelection?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -79,7 +77,7 @@ struct NotchTodoView: View {
 
     private var inputRow: some View {
         HStack(spacing: 6) {
-            TextField("Add a todo…", text: $manager.draftTitle, selection: $inputSelection)
+            TextField("Add a todo…", text: $manager.draftTitle)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($isInputFocused)
@@ -226,14 +224,21 @@ struct NotchTodoView: View {
     /// `TodoKeyboardFocus.begin(window:)` 同步完成，这里只负责 SwiftUI 侧的焦点。
     ///
     /// 视图刚创建时同一轮设置的焦点可能被忽略，所以下一轮 runloop 设一次、稍后再补一次。
-    /// 每次聚焦后都把光标放回草稿末尾，接着打字是续写而不是覆盖。
+    ///
+    /// 文本框获得焦点时 AppKit 默认全选，接着打字会把保留的草稿整段替换掉。
+    /// 每次聚焦后把字段编辑器的光标移到末尾，打字就是续写。App 最低支持 macOS 14.6，
+    /// SwiftUI 的 TextSelection 要 macOS 15，所以直接操作字段编辑器。
     private func focusInput() {
-        let placeCursorAtEnd = {
+        let focusAndPlaceCursorAtEnd = {
             isInputFocused = true
-            inputSelection = TextSelection(insertionPoint: manager.draftTitle.endIndex)
+            // 焦点落定、字段编辑器接管之后才能改选区，所以再等一轮 runloop
+            DispatchQueue.main.async {
+                guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+                editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+            }
         }
-        DispatchQueue.main.async(execute: placeCursorAtEnd)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: placeCursorAtEnd)
+        DispatchQueue.main.async(execute: focusAndPlaceCursorAtEnd)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: focusAndPlaceCursorAtEnd)
     }
 }
 

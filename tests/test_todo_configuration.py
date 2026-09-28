@@ -142,10 +142,12 @@ class TodoConfigurationTests(unittest.TestCase):
         self.assertNotRegex(todo_view, r"@State private var draft\b", "草稿又回到了视图的 @State，刘海收起就会丢")
         focus = slice_between(todo_view, "private func focusInput()", "\n    }\n")
         self.assertIn(
-            "TextSelection(insertionPoint:",
+            "setSelectedRange(",
             focus,
             "聚焦时没有把光标放到草稿末尾：文本框默认全选，快捷键重开后敲第一个字就会覆盖草稿",
         )
+        # App 最低支持 macOS 14.6，TextSelection 要 macOS 15，用了就编译失败（CI 实发过一次）
+        self.assertNotIn("TextSelection", todo_view)
 
     def test_settings_does_not_prompt_when_disabled(self):
         # 断言任务体里先判断开关再读取：只留 .task(id:) 而丢了 guard 时同样会弹权限框。
