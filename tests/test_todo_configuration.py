@@ -146,8 +146,10 @@ class TodoConfigurationTests(unittest.TestCase):
             focus,
             "聚焦时没有把光标放到草稿末尾：文本框默认全选，快捷键重开后敲第一个字就会覆盖草稿",
         )
-        # App 最低支持 macOS 14.6，TextSelection 要 macOS 15，用了就编译失败（CI 实发过一次）
-        self.assertNotIn("TextSelection", todo_view)
+        # App 最低支持 macOS 14.6，TextSelection 要 macOS 15，用了就编译失败（CI 实发过一次）。
+        # 只查代码不查注释：注释里说明为什么不用它是允许的
+        code = re.sub(r"//[^\n]*", "", todo_view)
+        self.assertNotIn("TextSelection", code, "用了 macOS 15 才有的 TextSelection，最低 14.6 的 App 编译会失败")
 
     def test_settings_does_not_prompt_when_disabled(self):
         # 断言任务体里先判断开关再读取：只留 .task(id:) 而丢了 guard 时同样会弹权限框。
