@@ -65,6 +65,8 @@ final class TodoManager: ObservableObject {
     private var storeObserver: NSObjectProtocol?
     private var refreshTask: Task<Void, Never>?
     private var hasPendingFocusRequest = false
+    /// 每次发起读取递增，读取返回时据此判断自己是否已被更新的读取取代。
+    private var refreshGeneration = 0
 
     /// 勾选完成后保留在列表里的时长。
     private let completionLinger: Duration = .milliseconds(700)
@@ -125,6 +127,9 @@ final class TodoManager: ObservableObject {
     /// 重新读取；`finishedID` 是刚淡出完的已完成条目，在拿到新数据的同一轮里才解除它的完成态，
     /// 避免读取期间那一行先闪回未勾选、勾选框又能点。
     private func refresh(finishing finishedID: String?) async {
+        // 读取可能乱序返回：只采用最后发起的那次，较早发起、较晚返回的快照可能早于刚做的保存
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         accessState = Self.currentAccessState()
         guard accessState == .granted else {
             if let finishedID { completingIDs.remove(finishedID) }
@@ -150,6 +155,11 @@ final class TodoManager: ObservableObject {
 
         let fetched = await Self.fetchIncomplete(from: store, in: calendar)
         if let finishedID { completingIDs.remove(finishedID) }
+        guard generation == refreshGeneration else {
+            // 更新的读取仍在途，列表由它决定；已完成的条目先移出，淡出结束后不会闪回未勾选
+            if let finishedID { items.removeAll { $0.id == finishedID } }
+            return
+        }
         // 仍在淡出的条目保留旧行；重复提醒完成后以同一 ID 滚到下一次，淡出结束才换成新数据
         items = TodoLogic.sorted(fetched.filter { !completingIDs.contains($0.id) } + items.filter { completingIDs.contains($0.id) })
         lastError = nil
@@ -187,6 +197,8 @@ final class TodoManager: ObservableObject {
     /// 淡出结束后重新读取而不是直接从列表删掉：重复提醒完成后会以同一个 ID 滚到下一次，
     /// 重新读取才能让下一次的待办留在列表里。
     func complete(_ item: TodoItem) async {
+        // 淡出期间勾选框已禁用，但读屏的「标记完成」操作不受禁用约束；重复提醒被再次完成会跳过一次
+        guard !completingIDs.contains(item.id) else { return }
         guard let reminder = store.calendarItem(withIdentifier: item.id) as? EKReminder else {
             await refresh()
             return

@@ -63,6 +63,10 @@ jobs:
             tests/inbox_probe.swift
           "$RUNNER_TEMP/inbox_probe"
 
+      # 待办接入点断言 + 纯逻辑探针（测试内部用命令行工具链编译运行 tests/todo_probe.swift）
+      - name: Validate todo configuration
+        run: python3 -m unittest tests.test_todo_configuration
+
       - name: Download Metal Toolchain
         # The downloadable Metal Toolchain is an Xcode 26+ (macOS 26) component; older Xcode ships metal.
         run: |

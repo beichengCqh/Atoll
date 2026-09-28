@@ -109,22 +109,55 @@ class TodoConfigurationTests(unittest.TestCase):
             handler,
             "快捷键没有同步激活 Atoll 并设 key window，打开后立刻敲的字会落进原来的 App",
         )
+        self.assertIn(
+            "TodoKeyboardFocus.markKeyboardClose(of:",
+            handler,
+            "快捷键收起时没有标记键盘收起，归还焦点前会多出 150ms 的丢键窗口",
+        )
+        self.assertIn(
+            "NSScreen.screenWithMouse",
+            handler,
+            "多屏模式下应按 screenWithMouse 选屏：frame.contains 不含屏幕最顶一行，光标停在刘海上时选不到屏",
+        )
 
     def test_keyboard_focus_is_returned_and_notch_can_be_dismissed(self):
         closed_branch = slice_between(self.content_source, "if newState == .closed {", "} else {")
         self.assertIn(
-            "TodoKeyboardFocus.end()",
+            "TodoKeyboardFocus.end(viewModel: vm)",
             closed_branch,
             "刘海收起时没有归还前台：快捷键收起后 Atoll 仍在前台，之后的按键全部丢失",
         )
         monitor_guard = slice_between(self.content_source, "func syncStickyTerminalOutsideClickMonitor()", "installStickyTerminalClickMonitor()")
         self.assertIn(".todo", monitor_guard, "快捷键打开的待办页点击外部无法收起")
         todo_view = (SOURCE_ROOT / "components/Todo/NotchTodoView.swift").read_text()
-        self.assertIn(".onExitCommand", todo_view, "待办页输入框缺 Esc 收起")
+        exit_handler = slice_between(todo_view, ".onExitCommand {", "}")
+        self.assertIn("markKeyboardClose(of: vm)", exit_handler, "Esc 收起前没有标记键盘收起")
+        self.assertIn("vm.close()", exit_handler, "待办页输入框缺 Esc 收起")
+
+    def test_draft_survives_notch_close_and_reopen(self):
+        todo_view = (SOURCE_ROOT / "components/Todo/NotchTodoView.swift").read_text()
+        manager = (SOURCE_ROOT / "managers/Todo/TodoManager.swift").read_text()
+        self.assertIn("@Published var draftTitle", manager, "草稿要放在 TodoManager 上，刘海收起销毁视图后才不会丢")
+        self.assertIn("text: $manager.draftTitle", todo_view, "输入框没有绑定到 TodoManager 上的草稿")
+        self.assertNotRegex(todo_view, r"@State private var draft\b", "草稿又回到了视图的 @State，刘海收起就会丢")
+        focus = slice_between(todo_view, "private func focusInput()", "\n    }\n")
+        self.assertIn(
+            "TextSelection(insertionPoint:",
+            focus,
+            "聚焦时没有把光标放到草稿末尾：文本框默认全选，快捷键重开后敲第一个字就会覆盖草稿",
+        )
 
     def test_settings_does_not_prompt_when_disabled(self):
-        # 断言任务体里先判断开关再读取：只留 .task(id:) 而丢了 guard 时同样会弹权限框
-        body = slice_between(self.todo_settings_source, ".task(id: enableTodoFeature) {", "\n        }\n")
+        # 断言任务体里先判断开关再读取：只留 .task(id:) 而丢了 guard 时同样会弹权限框。
+        # 先去掉行注释并拒绝条件编译，guard 被注释掉或包进 #if false 时也要报警
+        code = re.sub(r"//[^\n]*", "", self.todo_settings_source)
+        self.assertNotIn("#if", code, "TodoSettings 里出现条件编译，开关判断可能被编译掉")
+        self.assertEqual(
+            1,
+            code.count("manager.activate("),
+            "TodoSettings 只能在受开关保护的 task 里读取提醒事项，其他调用点会绕过开关弹权限框",
+        )
+        body = slice_between(code, ".task(id: enableTodoFeature) {", "\n        }\n")
         guard_at = body.find("guard enableTodoFeature else { return }")
         activate_at = body.find("manager.activate(")
         self.assertNotEqual(-1, guard_at, "设置页读取提醒事项前没有判断功能开关，关闭功能时打开设置页也会弹权限框")

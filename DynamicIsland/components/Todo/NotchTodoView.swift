@@ -29,6 +29,8 @@ struct NotchTodoView: View {
     @Default(.todoReminderListID) private var listID
 
     @FocusState private var isInputFocused: Bool
+    /// 输入框的光标 / 选区。聚焦时放到草稿末尾：文本框获得焦点默认全选，接着打字会把保留的草稿整段替换掉。
+    @State private var inputSelection: TextSelection?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -77,13 +79,16 @@ struct NotchTodoView: View {
 
     private var inputRow: some View {
         HStack(spacing: 6) {
-            TextField("Add a todo…", text: $manager.draftTitle)
+            TextField("Add a todo…", text: $manager.draftTitle, selection: $inputSelection)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($isInputFocused)
                 .onSubmit(addDraft)
-                // Esc 收起刘海；焦点归还由刘海收起时的 TodoKeyboardFocus.end() 统一处理
-                .onExitCommand { vm.close() }
+                // Esc 收起刘海；焦点归还由刘海收起时的 TodoKeyboardFocus.end(viewModel:) 统一处理
+                .onExitCommand {
+                    TodoKeyboardFocus.markKeyboardClose(of: vm)
+                    vm.close()
+                }
                 .disabled(manager.accessState != .granted)
             dueChip
             Button(action: addDraft) {
@@ -221,13 +226,14 @@ struct NotchTodoView: View {
     /// `TodoKeyboardFocus.begin(window:)` 同步完成，这里只负责 SwiftUI 侧的焦点。
     ///
     /// 视图刚创建时同一轮设置的焦点可能被忽略，所以下一轮 runloop 设一次、稍后再补一次。
+    /// 每次聚焦后都把光标放回草稿末尾，接着打字是续写而不是覆盖。
     private func focusInput() {
-        DispatchQueue.main.async {
+        let placeCursorAtEnd = {
             isInputFocused = true
+            inputSelection = TextSelection(insertionPoint: manager.draftTitle.endIndex)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            isInputFocused = true
-        }
+        DispatchQueue.main.async(execute: placeCursorAtEnd)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: placeCursorAtEnd)
     }
 }
 

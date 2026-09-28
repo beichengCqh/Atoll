@@ -170,10 +170,17 @@ struct TodoProbe {
 
     static func checkFocusReturn() {
         print("收起后焦点去向")
-        func decide(active: Bool = true, otherKey: Bool = false, previous: Bool = false, app: Bool = true) -> TodoFocusReturn {
+        func decide(
+            active: Bool = true,
+            otherKey: Bool = false,
+            opened: Bool = false,
+            previous: Bool = false,
+            app: Bool = true
+        ) -> TodoFocusReturn {
             TodoFocusPolicy.decide(
                 atollIsActive: active,
                 keyWindowIsOther: otherKey,
+                openedWindowAvailable: opened,
                 previousWindowAvailable: previous,
                 returnAppAvailable: app
             )
@@ -181,6 +188,7 @@ struct TodoProbe {
         check("常规：还给借焦点前的前台 App", decide() == .returnApp)
         check("用户已点到别的 App：不抢回", decide(active: false) == .keep)
         check("焦点已在 Atoll 设置等其他窗口：不动", decide(otherKey: true, previous: true) == .keep)
+        check("借焦点期间开了设置又点回刘海：交给设置窗口", decide(opened: true, previous: true) == .openedWindow)
         check("借焦点前开着 Atoll 自己的窗口：还给那个窗口", decide(previous: true) == .previousWindow)
         check("借焦点时 Atoll 已在前台且无窗口可还：让出前台", decide(app: false) == .deactivate)
     }

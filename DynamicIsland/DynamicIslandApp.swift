@@ -1523,22 +1523,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             guard Defaults[.enableShortcuts], Defaults[.enableTodoFeature] else { return }
 
-            // 与剪贴板 notchTab 快捷键一致：「所有显示器」模式下操作鼠标所在屏幕的刘海
+            // 「所有显示器」模式下操作鼠标所在屏幕的刘海。screenWithMouse 把屏幕最顶一行也算在内，
+            // 光标停在刘海或菜单栏上时同样能选中
             var activeVM = vm
             var notchWindow = window
-            if Defaults[.showOnAllDisplays] {
-                let mouseLocation = NSEvent.mouseLocation
-                for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
-                    if let screenViewModel = viewModels[screen] {
-                        activeVM = screenViewModel
-                        notchWindow = windows[screen]
-                        break
-                    }
-                }
+            if Defaults[.showOnAllDisplays], let screen = NSScreen.screenWithMouse,
+               let screenViewModel = viewModels[screen] {
+                activeVM = screenViewModel
+                notchWindow = windows[screen]
             }
 
             if activeVM.notchState == .open && coordinator.currentView == .todo {
                 coordinator.suppressHoverOpen()
+                TodoKeyboardFocus.markKeyboardClose(of: activeVM)
                 activeVM.close()
                 return
             }
@@ -1551,7 +1548,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.currentView = .todo
             // 拿不到刘海窗口时不借焦点，避免激活了 Atoll 却无处输入
             if let notchWindow {
-                TodoKeyboardFocus.begin(window: notchWindow)
+                TodoKeyboardFocus.begin(window: notchWindow, viewModel: activeVM)
                 TodoManager.shared.requestInputFocus()
             }
         }

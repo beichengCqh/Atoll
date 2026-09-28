@@ -799,7 +799,7 @@ struct ContentView: View {
                 }
                 if newState == .closed {
                     removeStickyTerminalClickMonitor()
-                    TodoKeyboardFocus.end()
+                    TodoKeyboardFocus.end(viewModel: vm)
                 } else {
                     // Install the outside-click monitor for terminal opens that don't
                     // change `currentView` (e.g. shortcut re-opening with the terminal
